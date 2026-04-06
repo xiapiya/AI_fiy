@@ -1,0 +1,3 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/guides/reuse-first-principle.md", "reason": "禁止造轮子原则"}
+{"file": ".trellis/spec/guides/embedded-guidelines.md", "reason": "ESP32嵌入式开发规范"}
