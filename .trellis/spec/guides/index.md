@@ -4,6 +4,17 @@
 
 ---
 
+## AI交互规范 (AI Interaction Guidelines)
+
+**重要**: 所有AI回复必须使用中文
+
+- ✅ 使用中文回复所有问题和说明
+- ✅ 代码注释可以使用英文
+- ✅ 技术术语保持英文（如MQTT, I2S, FastAPI等）
+- ❌ 不要使用英文进行对话和解释
+
+---
+
 ## Why Thinking Guides?
 
 **Most bugs and tech debt come from "didn't think of that"**, not from lack of skill:
