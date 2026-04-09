@@ -181,3 +181,93 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 更新嵌入式规范至 ESP-IDF v3.2
+
+**Date**: 2026-04-09
+**Task**: 更新嵌入式规范至 ESP-IDF v3.2
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 会话概述
+
+本次会话主要工作：读取更新后的 Epic/PRD/User Stories 文档（V3.1/V3.2），并开始同步更新 Trellis 开发规范文档。
+
+## 完成的工作
+
+### 1. 文档分析
+- 读取了三个核心文档：
+  - `Epic 文档：ESP32-S3 多模态情感陪伴智能体（V3.1 纯 ESP-IDF 重构版）`
+  - `产品需求文档 (PRD)：ESP32 + MCP over MQTT 情感陪伴智能体`
+  - `ESP32-S3 多模态情感陪伴智能体（V3.2 纯 ESP-IDF 细化版）- User Stories`
+
+### 2. 规范文档更新
+
+#### 更新文件：`.trellis/spec/guides/embedded-guidelines.md`
+
+**核心变更**：
+- **架构升级**：从 "ESP-IDF / Arduino" 改为 **"纯 ESP-IDF (v5.x)"**，全面弃用 Arduino 框架
+- **FreeRTOS 任务设计**：添加多任务架构说明（VAD、播放、MQTT、LVGL、摄像头独立任务）
+- **状态机重构**：从简单 enum 改为基于 FreeRTOS Event Group 的事件驱动模型
+- **LVGL 线程安全**：强调必须使用 `xSemaphoreTake/Give` 互斥锁保护 UI 操作
+- **API 重写策略**：明确说明不能直接复制 EMQX 官方 Arduino 代码，需提炼业务逻辑用 ESP-IDF C 重写
+- **MQTT Topics**：更新为分层主题设计（`{product}/esp32/{device_id}/*`）
+
+**新增内容**：
+- FreeRTOS 任务创建示例代码
+- LVGL 互斥锁使用示例
+- esp_mqtt_client 配置示例
+- 线程安全警告和风险点
+
+#### 更新文件：`.trellis/spec/guides/index.md`
+
+**新增 AI 交互规范**：
+- 要求所有 AI 回复必须使用中文
+- 代码注释可使用英文
+- 技术术语保持英文
+
+## 技术要点
+
+| 变更项 | 从 | 到 | 原因 |
+|-------|-----|-----|------|
+| 开发框架 | Arduino | ESP-IDF v5.x | 工业级稳定性、FreeRTOS 原生调度 |
+| I2S 驱动 | Arduino I2S 库 | `driver/i2s_std.h` | 更底层控制、更高性能 |
+| MQTT 客户端 | PubSubClient | `mqtt/mqtt_client.h` | ESP-IDF 原生支持 |
+| TFT 驱动 | TFT_eSPI | `esp_lcd_panel_*` | 官方标准、多任务安全 |
+| 状态管理 | 简单 enum | FreeRTOS Event Group | 多任务同步 |
+
+## 未完成的工作
+
+- 嵌入式规范文档更新被用户中断（剩余部分：HTTP 上传、内存管理、开发环境配置）
+- 任务 PRD 未同步更新
+- 任务配置未同步更新
+
+## 下一步
+
+1. 继续完成 `embedded-guidelines.md` 剩余内容
+2. 同步更新任务 PRD 文档
+3. 根据新架构重新评估 Phase 1 任务范围
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a998a1d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
