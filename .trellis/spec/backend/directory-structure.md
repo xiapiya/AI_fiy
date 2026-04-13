@@ -1,6 +1,8 @@
-# Directory Structure
+# Directory Structure (V4.0 云端架构版)
 
 > Python/FastAPI 项目目录组织规范
+>
+> **版本演进**: V4.0新增NewAPI网关集成、云端部署配置
 
 ---
 
@@ -8,11 +10,12 @@
 
 后端使用 **Python + FastAPI** 实现云端AI大脑,负责:
 - 音频/图像数据处理
-- 大模型调用 (Qwen-VL, Qwen-Omni)
-- MQTT消息路由
+- 通过**NewAPI网关**调度大模型 (Qwen-VL, Qwen-Omni)
+- MQTT消息路由与下发
 - TTS音频生成与转码
+- 公网HTTPS接口暴露
 
-**核心设计原则**: 分层架构 + 依赖注入 + 异步优先
+**核心设计原则**: 分层架构 + 依赖注入 + 异步优先 + 网关安全
 
 ---
 
@@ -23,34 +26,50 @@ backend/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI应用入口
-│   ├── config.py            # 配置管理(环境变量、DashScope API Key等)
-│   ├── routes/              # 路由层(接收请求、参数校验)
+│   ├── config.py            # 配置管理(环境变量、NewAPI端点、MQTT配置等)
+│   ├── api/                 # API路由层 (V4.0规范化命名)
 │   │   ├── __init__.py
-│   │   ├── audio.py         # POST /process_audio (EMQX Webhook)
-│   │   ├── image.py         # POST /upload/image (HTTP图像上传)
-│   │   └── health.py        # GET /health (健康检查)
+│   │   └── v1/              # API版本管理
+│   │       ├── __init__.py
+│   │       ├── audio.py     # POST /api/v1/audio (EMQX Webhook)
+│   │       └── vision.py    # POST /api/v1/vision/upload (HTTPS图像上传)
 │   ├── services/            # 业务逻辑层
 │   │   ├── __init__.py
-│   │   ├── qwen_vl.py       # Qwen-VL多模态大模型调用
-│   │   ├── qwen_omni.py     # Qwen-Omni语音大模型调用
-│   │   ├── tts.py           # TTS合成 + lameenc转MP3
+│   │   ├── newapi.py        # NewAPI网关客户端 (V4.0新增)
+│   │   ├── qwen_vl.py       # Qwen-VL多模态调用 (通过NewAPI)
+│   │   ├── qwen_omni.py     # Qwen-Omni语音调用 (通过NewAPI)
+│   │   ├── tts.py           # TTS合成 + MP3转码 (32kbps)
 │   │   ├── audio_filter.py  # 静音/噪音前置检测
-│   │   └── mqtt_client.py   # MQTT发布客户端
+│   │   ├── mqtt.py          # MQTTS客户端 (V4.0启用TLS)
+│   │   └── fallback.py      # 兜底音频管理 (V4.0新增)
 │   ├── models/              # 数据模型(Pydantic)
 │   │   ├── __init__.py
-│   │   ├── requests.py      # 请求模型(AudioRequest, ImageRequest)
+│   │   ├── requests.py      # 请求模型(AudioRequest, VisionRequest)
 │   │   └── responses.py     # 响应模型(AIResponse, UIUpdate)
+│   ├── core/                # 核心配置 (V4.0新增)
+│   │   ├── __init__.py
+│   │   ├── config.py        # 环境变量配置类
+│   │   └── security.py      # JWT/Token验证
 │   ├── utils/               # 工具函数
 │   │   ├── __init__.py
-│   │   ├── logger.py        # 统一日志配置
+│   │   ├── logger.py        # 结构化JSON日志
 │   │   └── audio_utils.py   # 音频处理工具
 │   └── exceptions/          # 自定义异常
 │       ├── __init__.py
-│       └── errors.py        # LLMAPIError, MQTTPublishError等
+│       └── errors.py        # LLMAPIError, MQTTPublishError, NewAPIError等
 ├── tests/                   # 测试代码
 │   ├── test_audio.py
-│   ├── test_qwen_vl.py
-│   └── test_tts.py
+│   ├── test_vision.py
+│   ├── test_newapi.py
+│   └── test_mqtt.py
+├── deploy/                  # 部署配置 (V4.0新增)
+│   ├── docker-compose.yml   # 1Panel部署配置
+│   ├── nginx.conf           # Nginx SSL反向代理
+│   └── supervisord.conf     # 进程管理
+├── certs/                   # SSL证书 (V4.0新增)
+│   ├── server.crt           # HTTPS服务器证书
+│   ├── server.key           # 私钥
+│   └── ca.pem               # MQTTS CA证书
 ├── requirements.txt         # 依赖列表
 ├── .env.example             # 环境变量示例
 ├── Dockerfile               # 容器化部署

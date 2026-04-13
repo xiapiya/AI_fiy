@@ -1,21 +1,31 @@
-# Android Development Guidelines (Kotlin)
+# Frontend Development Guidelines (V4.0 多端协同版)
 
-> Android客户端开发规范
+> 前端开发规范 (Android + Web监控端)
+>
+> **版本演进**: V4.0新增Web监控端(WSS实时可视化) + Android远程控制增强
 
 ---
 
 ## Overview
 
-**技术栈**: Kotlin + MQTT (HiveMQ) + Room + Foreground Service + Material Design
+**V4.0多端架构**:
+1. **Android移动端**: 用户随身伴侣,远程控制宿舍/桌面设备
+2. **Web监控端**: 管理员视角,实时查看云端处理链路和抓拍画面
 
-本项目Android端为**情感陪伴智能体的移动伴侣端**,提供:
+---
+
+## Android 移动端 (Kotlin)
+
+**技术栈**: Kotlin + HiveMQ MQTT + Room + Foreground Service + Material Design
+
+**核心功能**:
 - 实时监控ESP32设备状态
 - 远程语音发送
-- 远程拍照指令
-- 历史聊天记录本地持久化(Room)
-- "静音硬件"开关(防止多设备冲突)
+- **远程拍照指令** (V4.0新增)
+- **静音硬件开关** (V4.0新增,防止多设备冲突)
+- 历史聊天记录+图片本地持久化(Room)
 
-**核心原则**: 复用成熟库 + Kotlin协程 + 后台保活
+**核心原则**: 复用成熟库 + Kotlin协程 + Foreground Service保活
 
 ---
 
@@ -156,6 +166,68 @@ class MQTTService : Service() {
 
 ---
 
+## 远程控制功能 (V4.0新增)
+
+### 远程拍照指令
+
+```kotlin
+// RemoteControlManager.kt
+class RemoteControlManager(private val mqttClient: Mqtt5AsyncClient) {
+
+    /**
+     * 发送远程拍照指令
+     * 下发到主题: emqx/esp32/{deviceId}/control
+     */
+    fun requestCapture(deviceId: String) {
+        val payload = JSONObject().apply {
+            put("action", "capture")
+            put("timestamp", System.currentTimeMillis())
+        }.toString()
+
+        mqttClient.publishWith()
+            .topic("emqx/esp32/$deviceId/control")
+            .payload(payload.toByteArray())
+            .send()
+
+        Log.d(TAG, "已发送远程拍照指令到设备: $deviceId")
+    }
+
+    /**
+     * 静音硬件开关
+     * 防止用户在外用App对话时,宿舍桌面的硬件也响应麦克风
+     */
+    fun muteMicrophone(deviceId: String, muted: Boolean) {
+        val payload = JSONObject().apply {
+            put("action", "mute")
+            put("muted", muted)
+        }.toString()
+
+        mqttClient.publishWith()
+            .topic("emqx/esp32/$deviceId/control")
+            .payload(payload.toByteArray())
+            .send()
+    }
+}
+```
+
+---
+
+## Web 监控端 (V4.0新增)
+
+**技术栈**: HTML/JS + WebSocket Secure (WSS) + Chart.js
+**部署**: Nginx静态文件托管
+**权限**: 只读权限,不下发控制指令
+
+**核心功能**:
+1. WSS连接EMQX,订阅`emqx/system/logs`
+2. 实时显示云端处理链路日志
+3. 展示抓拍图片记录
+4. 耗时统计图表 (全链路延迟分析)
+
+详见: [web-monitor.md](./web-monitor.md)
+
+---
+
 ## 禁止造轮子
 
 ### 必须复用的库
@@ -166,6 +238,7 @@ class MQTTService : Service() {
 | 数据库 | Room | ❌ 不要用SQLite原始API |
 | 网络请求 | Retrofit/OkHttp | ❌ 不要用HttpURLConnection |
 | 协程 | Kotlin Coroutines | ❌ 不要用Thread/AsyncTask |
+| WebSocket (Web端) | 原生WebSocket API | ❌ 不要自己实现WSS握手 |
 
 ---
 
@@ -173,10 +246,11 @@ class MQTTService : Service() {
 
 ### ✅ DO
 
-- 使用 HiveMQ MQTT Client
-- 使用 Room 持久化
+- 使用 HiveMQ MQTT Client (Android)
+- 使用 Room 持久化聊天记录和图片
 - 使用 Foreground Service 保活
 - 使用 Kotlin 协程管理异步
+- Web端使用WSS (而非WS) 连接EMQX
 - 使用 codex MCP 审查代码
 
 ### ❌ DON'T
@@ -184,7 +258,8 @@ class MQTTService : Service() {
 - ❌ 不要造轮子
 - ❌ 不要使用废弃的Paho Android Service
 - ❌ 不要忘记申请 FOREGROUND_SERVICE 权限
+- ❌ Web端不要尝试下发控制指令 (只读权限)
 
 ---
 
-**总结**: 复用成熟库 + 协程异步 + 后台保活
+**总结**: 复用成熟库 + 协程异步 + 后台保活 + 多端协同

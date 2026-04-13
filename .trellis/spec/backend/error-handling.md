@@ -1,15 +1,18 @@
-# Error Handling
+# Error Handling (V4.0 云端架构版)
 
 > Python/FastAPI 错误处理规范
+>
+> **版本演进**: V4.0新增NewAPI网关错误、MQTTS连接错误、HTTPS上传错误处理
 
 ---
 
 ## Overview
 
-基于 **PRD 要求**,错误处理必须保证:
+基于 **PRD V4.0 要求**,错误处理必须保证:
 1. **快速失败 + 兜底机制**: 大模型API超时/失败时立即下发预置音频,防止硬件无限等待
 2. **详细日志**: 记录完整错误上下文,便于排查
 3. **用户友好**: 错误响应格式统一,易于客户端处理
+4. **云端容错**: NewAPI不可用时自动降级,MQTTS断线自动重连
 
 **核心原则**: **永远不要让ESP32等待超过10秒**
 
@@ -40,6 +43,17 @@ class MQTTPublishError(Exception):
 
 class TTSError(Exception):
     """TTS合成或MP3转码失败"""
+    pass
+
+class NewAPIError(Exception):
+    """NewAPI网关相关错误 (V4.0新增)"""
+    def __init__(self, message: str, retry: bool = True):
+        self.message = message
+        self.retry = retry  # 是否可重试
+        super().__init__(self.message)
+
+class HTTPSUploadError(Exception):
+    """HTTPS图片上传失败 (V4.0新增)"""
     pass
 ```
 

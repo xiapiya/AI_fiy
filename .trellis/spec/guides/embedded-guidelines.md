@@ -1,6 +1,8 @@
-# ESP32-S3 Embedded Development Guidelines (V3.2 纯 ESP-IDF)
+# ESP32-S3 Embedded Development Guidelines (V4.0 云端架构演进版)
 
-> 嵌入式硬件开发规范(基于PRD/Epic/Story V3.2)
+> 嵌入式硬件开发规范(基于PRD/Epic/Story V4.0)
+>
+> **版本演进**: V4.0在V3.2基础上新增公网加密通信、云端容器化架构、多端协同能力
 
 ---
 
@@ -8,13 +10,15 @@
 
 **硬件平台**: ESP32-S3-N16R8 (16MB Flash + 8MB PSRAM)
 **开发框架**: **纯 ESP-IDF (v5.x)** - **全面弃用 Arduino 框架**
-**核心功能**: I2S音频 + SPI TFT + OV2640摄像头 + MQTT + HTTP + LVGL UI
+**核心功能**: I2S音频 + SPI TFT + OV2640摄像头 + **MQTTS** + **HTTPS** + LVGL UI
 **任务调度**: FreeRTOS 原生多任务调度
+**通信架构**: **公网加密双通道** (MQTTS轻数据 + HTTPS重数据)
 
 **核心原则**:
 1. **禁止造轮子** - 优先复用官方代码并用 ESP-IDF API 重写
 2. **工业级稳定** - 使用原生 ESP-IDF API 而非 Arduino 封装
 3. **FreeRTOS 管理** - 严格使用任务队列、信号量、互斥锁
+4. **公网安全** - 必须启用TLS/SSL加密，防止数据泄露和篡改
 
 ---
 
@@ -98,18 +102,24 @@ void app_main(void) {
 }
 ```
 
-### 状态机 (基于 FreeRTOS Event Group)
+### 状态机 (基于 FreeRTOS Event Group) - V4.0扩展
 
 ```c
 // 使用事件组管理状态
 EventGroupHandle_t system_event_group;
 
+// V3.2 基础状态
 #define STATE_IDLE_BIT       BIT0   // 待机
 #define STATE_RECORDING_BIT  BIT1   // 录音中
 #define STATE_CAPTURING_BIT  BIT2   // 拍照中
 #define STATE_THINKING_BIT   BIT3   // 推理中
 #define STATE_PLAYING_BIT    BIT4   // 播放中
 #define STATE_COOLDOWN_BIT   BIT5   // 冷却期(3秒)
+
+// V4.0 新增公网状态
+#define STATE_TLS_HANDSHAKE_BIT  BIT6   // TLS握手中 (显示"安全连接中...")
+#define STATE_CLOUD_SYNC_BIT     BIT7   // 云端同步中 (显示"上行同步中...")
+#define STATE_UPLOADING_BIT      BIT8   // 图片上传中 (显示HTTPS上传进度)
 ```
 
 ### PRD 核心要求
@@ -171,25 +181,39 @@ void update_ui_from_other_task() {
 
 ---
 
-## MQTT Topics (分层主题设计)
+## 公网加密通信 (V4.0 新增)
 
-```
-{product}/esp32/{device_id}/audio       # ESP32 上传录音 (Base64)
-{product}/esp32/{device_id}/playaudio   # 云端下发播放音频 (MP3 Base64)
-{product}/esp32/{device_id}/ui          # 云端下发 UI 状态 (JSON: text/emotion/status)
-{product}/esp32/{device_id}/control     # 云端/App 控制指令 (远程拍照、静音)
-{product}/esp32/{device_id}/status      # ESP32 上报设备状态 (心跳、错误)
-emqx/system/logs                        # 全局日志主题
-```
+### 通信架构设计
 
-### esp_mqtt_client 示例
+**双通道策略**: 重数据走HTTPS，轻数据走MQTTS
+
+| 通道类型 | 协议 | 用途 | 数据类型 |
+|---------|------|------|---------|
+| **MQTTS** | MQTT over TLS | 实时控制流、设备状态流、音频数据 | Base64音频、JSON指令 |
+| **HTTPS** | HTTP over SSL | 大体积图片上传 | JPEG图片(<300KB) |
+
+### MQTTS 配置 (必须启用TLS)
+
+**CRITICAL**: 公网部署必须开启TLS/SSL加密，防止数据窃听和篡改
 
 ```c
 #include "mqtt_client.h"
+#include "esp_crt_bundle.h"
+
+// 外部声明嵌入的CA证书
+extern const uint8_t server_cert_pem_start[] asm("_binary_server_cert_pem_start");
+extern const uint8_t server_cert_pem_end[]   asm("_binary_server_cert_pem_end");
 
 esp_mqtt_client_config_t mqtt_cfg = {
-    .broker.address.uri = "mqtt://your-broker:1883",
-    .credentials.client_id = "esp32_device_001",
+    .broker = {
+        .address.uri = "mqtts://your-server.com:8883",  // 使用mqtts://和8883端口
+        .verification.certificate = (const char *)server_cert_pem_start,  // CA证书
+    },
+    .credentials = {
+        .client_id = "esp32_device_001",
+        .username = "your-username",   // EMQX认证
+        .password = "your-password",
+    },
 };
 
 esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
@@ -199,6 +223,101 @@ esp_mqtt_client_start(client);
 // 订阅主题
 esp_mqtt_client_subscribe(client, "product/esp32/001/playaudio", 1);
 esp_mqtt_client_subscribe(client, "product/esp32/001/ui", 1);
+esp_mqtt_client_subscribe(client, "product/esp32/001/control", 1);
+```
+
+**证书烧录配置** (CMakeLists.txt):
+```cmake
+target_add_binary_data(your_project.elf "certs/server_cert.pem" TEXT)
+```
+
+### HTTPS 图片上传 (V4.0 新增)
+
+**用途**: OV2640抓拍后通过HTTPS POST直传云端FastAPI
+
+```c
+#include "esp_http_client.h"
+
+esp_err_t upload_jpeg_to_cloud(const uint8_t *jpeg_data, size_t jpeg_len) {
+    char url[256];
+    snprintf(url, sizeof(url), "https://your-server.com/api/v1/vision/upload");
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .cert_pem = (const char *)server_cert_pem_start,  // SSL证书
+        .timeout_ms = 10000,  // 10秒超时
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // 设置鉴权Token
+    esp_http_client_set_header(client, "Authorization", "Bearer YOUR_JWT_TOKEN");
+    esp_http_client_set_header(client, "Content-Type", "image/jpeg");
+
+    // 上传图片数据
+    esp_http_client_set_post_field(client, (const char *)jpeg_data, jpeg_len);
+
+    esp_err_t err = esp_http_client_perform(client);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "HTTPS上传成功, 状态码=%d", esp_http_client_get_status_code(client));
+    } else {
+        ESP_LOGE(TAG, "HTTPS上传失败: %s", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+    return err;
+}
+```
+
+### 内存管理优化 (CRITICAL!)
+
+**最大风险**: TLS/SSL握手时mbedTLS需要30-40KB连续内存，如果分配失败会导致设备重启
+
+**必须配置** (sdkconfig):
+```ini
+# 强制mbedTLS内存分配到PSRAM
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_PEER_CERT=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+
+# PSRAM配置
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+```
+
+**关键代码** (app_main.c):
+```c
+void app_main(void) {
+    // 启用PSRAM
+    esp_err_t ret = esp_psram_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "PSRAM初始化失败!");
+        return;
+    }
+
+    // 检查可用内存
+    ESP_LOGI(TAG, "Free heap: %d, PSRAM: %d",
+             esp_get_free_heap_size(),
+             esp_get_free_internal_heap_size());
+
+    // ... 其他初始化
+}
+```
+
+## MQTT Topics (公网鉴权分层设计)
+
+```
+{product}/esp32/{device_id}/audio       # ESP32 上传录音 (Base64)
+{product}/esp32/{device_id}/playaudio   # 云端下发播放音频 (MP3 Base64)
+{product}/esp32/{device_id}/ui          # 云端下发 UI 状态 (JSON: text/emotion/status)
+{product}/esp32/{device_id}/control     # 远程控制指令 (拍照/静音) - V4.0新增
+{product}/esp32/{device_id}/status      # ESP32 上报设备状态 (心跳、错误)
+emqx/system/logs                        # 全局日志主题
 ```
 
 ---

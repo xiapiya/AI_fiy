@@ -1,14 +1,18 @@
-# Logging Guidelines
+# Logging Guidelines (V4.0 云端架构版)
 
 > Python/FastAPI 日志规范
+>
+> **版本演进**: V4.0新增云端链路追踪、NewAPI调用日志、MQTT下发日志
 
 ---
 
 ## Overview
 
-使用 **Python标准库 logging** + **JSON格式化**,实现结构化日志
+使用 **Python标准库 logging** + **JSON格式化** + **MQTT日志广播**,实现结构化日志
 
-**核心原则**: 可追踪、可搜索、不泄密
+**核心原则**: 可追踪、可搜索、不泄密、云端可视化
+
+**V4.0新增**: 关键日志同时下发到MQTT主题`emqx/system/logs`,供Web监控端实时展示
 
 ---
 
@@ -107,6 +111,9 @@ async def call_qwen_vl(image_url: str):
 | MQTT消息 | INFO | 主题、payload大小 |
 | 错误/异常 | ERROR | 错误类型、堆栈、上下文 |
 | 兜底音频触发 | WARNING | 触发原因、设备ID |
+| NewAPI调用 (V4.0) | INFO | 模型名、内网端点、耗时 |
+| MQTTS下发 (V4.0) | INFO | 主题、payload类型、设备ID |
+| HTTPS上传 (V4.0) | INFO | 图片大小、上传耗时、ESP32设备ID |
 
 ### 示例
 
@@ -136,6 +143,61 @@ async def process_audio(request: Request):
             "context": {"device_id": device_id, "error": str(e)}
         })
         raise
+```
+
+---
+
+## MQTT日志广播 (V4.0新增)
+
+### 云端可视化日志
+
+**用途**: Web监控端通过WebSocket订阅`emqx/system/logs`,实时查看云端处理链路
+
+```python
+# app/utils/logger.py
+from app.services.mqtt import mqtt_client
+import json
+
+class MQTTLogHandler(logging.Handler):
+    """MQTT日志广播器"""
+    def emit(self, record):
+        if record.levelno >= logging.INFO:  # 只广播INFO及以上级别
+            log_data = {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "level": record.levelname,
+                "message": record.getMessage(),
+                "module": record.module
+            }
+            # 异步发送到MQTT
+            mqtt_client.publish_async(
+                topic="emqx/system/logs",
+                payload=json.dumps(log_data, ensure_ascii=False)
+            )
+
+# 添加到logger
+logger = setup_logger()
+mqtt_handler = MQTTLogHandler()
+logger.addHandler(mqtt_handler)
+```
+
+### 使用示例
+
+```python
+# app/services/qwen_vl.py
+from app.utils.logger import logger
+
+async def call_qwen_vl_via_newapi(image_url: str):
+    logger.info("开始NewAPI调用", extra={
+        "context": {
+            "model": "qwen-vl-max",
+            "endpoint": "http://localhost:3000/v1",
+            "image_url": image_url[:50]  # 仅记录前50字符
+        }
+    })
+    # 此日志会同时:
+    # 1. 输出到控制台 (JSON格式)
+    # 2. 广播到MQTT主题 emqx/system/logs
+    # 3. Web监控端实时接收并显示
 ```
 
 ---
