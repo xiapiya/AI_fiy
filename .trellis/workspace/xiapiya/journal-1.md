@@ -271,3 +271,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: V4.0架构升级：规范文档+ESP32-S3 MQTTS音频实现
+
+**Date**: 2026-04-13
+**Task**: V4.0架构升级：规范文档+ESP32-S3 MQTTS音频实现
+
+### Summary
+
+完成V4.0云端架构演进版的完整升级：更新所有规范文档、实现ESP32-S3 MQTTS音频通信基础功能、更新PRD/Epic/Stories到V4.0
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `67c6303` | (see git log) |
+| `4406aeb` | (see git log) |
+| `9e2141b` | (see git log) |
+| `470745b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
