@@ -33,12 +33,12 @@ static const char *TAG = "MAIN";
 // 1. 修改 WIFI_SSID 为实际的WiFi网络名称
 // 2. 修改 WIFI_PASSWORD 为实际的WiFi密码
 // 3. 确保WiFi网络可以访问互联网(MQTTS需要公网连接)
-#define WIFI_SSID      "your_wifi_ssid"      // 需要修改为实际WiFi SSID
-#define WIFI_PASSWORD  "your_wifi_password"  // 需要修改为实际WiFi密码
+#define WIFI_SSID      "C510"      // 需要修改为实际WiFi SSID
+#define WIFI_PASSWORD  "71377137"  // 需要修改为实际WiFi密码
 #define WIFI_MAXIMUM_RETRY  5
 
 static int wifi_retry_count = 0;
-static EventGroupHandle_t wifi_event_group;
+    static EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 const int WIFI_FAIL_BIT      = BIT1;
 
@@ -212,7 +212,9 @@ static void vad_task(void *pvParameters)
 
         // VAD检测
         if (vad_detect(frame_buffer, VAD_FRAME_SIZE)) {
-            ESP_LOGI(TAG, "VAD触发! 开始录音...");
+            ESP_LOGI(TAG, "========================================");
+            ESP_LOGI(TAG, ">>> 录音开始 <<<");
+            ESP_LOGI(TAG, "========================================");
 
             // 进入录音状态
             state_machine_enter_recording();
@@ -222,17 +224,21 @@ static void vad_task(void *pvParameters)
             ret = i2s_record_audio(audio_record_buffer, RECORD_BUFFER_SIZE, &total_bytes);
 
             if (ret == ESP_OK) {
-                ESP_LOGI(TAG, "录音完成: %d字节", total_bytes);
+                ESP_LOGI(TAG, "========================================");
+                ESP_LOGI(TAG, ">>> 录音结束: %d字节 (%.1f秒) <<<",
+                         total_bytes, (float)total_bytes / (SAMPLE_RATE * 2));
+                ESP_LOGI(TAG, "========================================");
 
                 // 进入云端同步状态
                 state_machine_enter_cloud_sync();
 
+                ESP_LOGI(TAG, ">>> 开始上传音频到服务器...");
                 // 上传音频到云端
                 ret = mqtt_publish_audio(audio_record_buffer, total_bytes);
                 if (ret == ESP_OK) {
-                    ESP_LOGI(TAG, "音频上传成功");
+                    ESP_LOGI(TAG, ">>> 音频上传成功! <<<");
                 } else {
-                    ESP_LOGE(TAG, "音频上传失败");
+                    ESP_LOGE(TAG, ">>> 音频上传失败! <<<");
                 }
             } else {
                 ESP_LOGE(TAG, "录音失败");
@@ -306,7 +312,7 @@ void app_main(void)
     }
 
     // ==================== 初始化VAD ====================
-    vad_init(0);  // 使用默认阈值
+    vad_init(1000.0);  // 能量阈值(安静时200-1000,说话时>2000)
 
     // ==================== 初始化MQTT ====================
     state_machine_enter_tls_handshake();

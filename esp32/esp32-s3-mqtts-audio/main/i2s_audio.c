@@ -60,6 +60,12 @@ esp_err_t i2s_audio_init(void)
         },
     };
 
+    // 明确指定只读取左声道（修复立体声交错问题）
+    // 问题: INMP441的L/R引脚悬空时会输出立体声交错数据，导致VAD误触发
+    // 硬件修复方案(推荐): 将INMP441的L/R引脚接地(GND)选择左声道
+    // 软件修复方案: 添加slot_mask强制只读左声道，忽略右声道干扰
+    rx_std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
+
     ret = i2s_channel_init_std_mode(rx_handle, &rx_std_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "初始化I2S RX标准模式失败: %s", esp_err_to_name(ret));
@@ -128,10 +134,8 @@ esp_err_t i2s_audio_init(void)
 
     return ESP_OK;
 }
+/*
 
-/**
- * @brief 录制音频
- */
 esp_err_t i2s_record_audio(uint8_t *buffer, size_t buffer_size, size_t *bytes_read)
 {
     if (buffer == NULL || bytes_read == NULL) {
@@ -177,7 +181,61 @@ esp_err_t i2s_record_audio(uint8_t *buffer, size_t buffer_size, size_t *bytes_re
 
     return ESP_OK;
 }
+*/
+/**
+ * @brief 录制音频 (修改后的通用版本)
+ */
+esp_err_t i2s_record_audio(uint8_t *buffer, size_t buffer_size, size_t *bytes_read)
+{
+    if (buffer == NULL || bytes_read == NULL) {
+        ESP_LOGE(TAG, "参数错误: buffer或bytes_read为NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
 
+    // --- 【删除/注释掉下面这段代码】 ---
+    /*
+    if (buffer_size < RECORD_BUFFER_SIZE) {
+        ESP_LOGE(TAG, "缓冲区太小: 需要%d字节, 提供%d字节",
+                 RECORD_BUFFER_SIZE, buffer_size);
+        return ESP_ERR_INVALID_ARG;
+    }
+    */
+    // --------------------------------
+
+    size_t total_read = 0;
+    esp_err_t ret = ESP_OK;
+
+    // 【关键修改点】: 将循环条件由 RECORD_BUFFER_SIZE 改为传入的 buffer_size
+    while (total_read < buffer_size) {
+        size_t bytes_to_read = buffer_size - total_read;
+        
+        // 限制单次读取大小，防止阻塞太久
+        if (bytes_to_read > DMA_BUF_LEN * 2) {
+            bytes_to_read = DMA_BUF_LEN * 2;
+        }
+
+        size_t bytes_read_chunk = 0;
+        ret = i2s_channel_read(rx_handle, buffer + total_read,
+                               bytes_to_read, &bytes_read_chunk,
+                               portMAX_DELAY);
+
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "读取I2S数据失败: %s", esp_err_to_name(ret));
+            *bytes_read = total_read;
+            return ret;
+        }
+
+        total_read += bytes_read_chunk;
+    }
+
+    *bytes_read = total_read;
+    // 只有在录制大包时才打印 LOG，防止 VAD 这种小包打印太快刷屏
+    if (total_read >= 16000) { 
+        ESP_LOGI(TAG, "大包录音完成: %d字节", total_read);
+    }
+
+    return ESP_OK;
+}
 /**
  * @brief 播放音频
  */
