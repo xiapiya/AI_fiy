@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-04-13
+- **Total Sessions**: 5
+- **Last Active**: 2026-04-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~308 | Active |
+| `journal-1.md` | ~407 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits |
 |---|------|-------|---------|
+| 5 | 2026-04-14 | 调试ESP32-S3音频播放无声音问题 | `dc04807` |
 | 4 | 2026-04-13 | V4.0架构升级：规范文档+ESP32-S3 MQTTS音频实现 | `67c6303`, `4406aeb`, `9e2141b`, `470745b` |
 | 3 | 2026-04-09 | 更新嵌入式规范至 ESP-IDF v3.2 | `a998a1d` |
 | 2 | 2026-04-06 | 启动Phase 1任务并准备开发环境 | - |
