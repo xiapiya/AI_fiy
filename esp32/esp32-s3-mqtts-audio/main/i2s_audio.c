@@ -117,6 +117,11 @@ esp_err_t i2s_audio_init(void)
         },
     };
 
+    // 明确指定播放左声道（修复单声道功放播放问题）
+    // 问题: MAX98357A是单声道功放,如果不指定slot_mask,I2S可能输出立体声交错格式
+    // 导致功放接收到错误的声道数据或音量极小
+    tx_std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
+
     ret = i2s_channel_init_std_mode(tx_handle, &tx_std_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "初始化I2S TX标准模式失败: %s", esp_err_to_name(ret));
