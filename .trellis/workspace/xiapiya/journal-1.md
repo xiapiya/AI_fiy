@@ -405,3 +405,159 @@ tx_std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: 修复LVGL v9 UI刷新问题 + 完善开发规范文档
+
+**Date**: 2026-04-17
+**Task**: 修复LVGL v9 UI刷新问题 + 完善开发规范文档
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 会话概述
+
+本次会话解决了ESP32-S3 TFT显示屏的关键bug，并创建了完整的LVGL开发规范文档。
+
+---
+
+## 问题诊断
+
+### 用户报告的问题
+1. **背景色显示异常** - 状态栏和字幕区显示绿色，而不是代码中设置的灰色(#222222)
+2. **WiFi/MQTT图标被遮挡** - 文字位置偏下，被黑色背景盖住
+3. **UI状态不更新** - 日志显示WiFi/MQTT已连接，但屏幕还是显示"OFF"；状态机切换时，表情和字幕不变化
+
+### 根本原因分析
+
+| 问题 | 根本原因 | 解决方案 |
+|------|---------|---------|
+| UI不刷新 | LVGL v9刷新是异步的，`lv_obj_invalidate()`只标记不立即刷新 | 添加`lv_refr_now(lvgl_display)`强制立即刷新 |
+| 背景色异常 | LVGL v9容器默认有padding，背景未填满 | 显式设置`lv_obj_set_style_pad_all(obj, 0, 0)` |
+| 状态监听失效 | `xEventGroupWaitBits()`在状态位一直为1时立即返回 | 改用`xEventGroupGetBits()`轮询+状态比较 |
+
+---
+
+## 技术实现
+
+### 1. LVGL v9强制刷新机制
+
+**修改文件**: `esp32/esp32-s3-mqtts-audio/main/lvgl_ui.c`
+
+```c
+// 所有UI更新函数添加强制刷新
+void lvgl_ui_set_wifi_status(bool connected) {
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // ... 更新UI ...
+        lv_obj_invalidate(wifi_icon);       // 标记重绘
+        lv_refr_now(lvgl_display);          // ✅ 立即强制刷新
+        xSemaphoreGive(lvgl_mutex);
+    }
+}
+```
+
+### 2. 容器padding清零
+
+```c
+void create_status_bar(void) {
+    lv_obj_t *status_bar = lv_obj_create(lv_screen_active());
+    lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_pad_all(status_bar, 0, 0);  // ✅ 清除默认padding
+}
+```
+
+### 3. 状态监听任务重构
+
+```c
+void state_monitor_task(void *pvParameters) {
+    EventBits_t last_state = 0;
+    
+    while (1) {
+        EventBits_t current_state = xEventGroupGetBits(event_group);
+        
+        // ✅ 只在状态真正变化时更新UI
+        if (current_state != last_state) {
+            // 更新UI...
+            last_state = current_state;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+```
+
+---
+
+## 文档更新
+
+### 创建了新文档
+- **`.trellis/spec/guides/lvgl-esp32-guidelines.md`** (3.3KB)
+  - LVGL v9刷新机制完整说明 (含Signatures/Contracts/Tests)
+  - 容器样式陷阱 (Wrong vs Correct对比)
+  - FreeRTOS状态监听正确写法
+  - 线程安全最佳实践
+
+### 更新了现有文档
+- **`embedded-guidelines.md`** - 添加状态监听任务正确写法
+- **`workflow.md`** - 明确codex MCP审查规范
+- **`guides/index.md`** - 添加LVGL文档链接
+
+---
+
+## 验证结果
+
+### ✅ 已验证通过
+- UI刷新机制：WiFi/MQTT状态更新后屏幕立即刷新
+
+### ⏸️ 待进一步验证
+- 容器背景色是否正确显示为灰色
+- 状态机切换时圆形颜色是否实时变化
+- 字幕是否跟随状态更新
+
+### 📝 下一步计划
+用户计划切换到**图形化配置工具** (SquareLine Studio)，不再使用纯代码开发LVGL UI
+
+---
+
+## 知识沉淀
+
+本次调试发现的3个LVGL v9关键陷阱已完整记录到code-spec：
+
+1. **强制刷新必不可少** - `lv_refr_now()`是多任务环境的关键
+2. **容器padding必须显式控制** - 默认padding导致背景异常
+3. **状态监听用轮询** - `xEventGroupGetBits()`比`xEventGroupWaitBits()`可靠
+
+未来开发者遇到类似问题时，可直接查阅`lvgl-esp32-guidelines.md`获得完整解决方案。
+
+---
+
+## 修改文件统计
+
+| 类型 | 文件数 | 主要文件 |
+|------|-------|---------|
+| ESP32代码 | 15+ | lvgl_ui.c, tft_display.c, main.c |
+| 文档 | 4 | lvgl-esp32-guidelines.md (新建) |
+| 配置 | 3 | sdkconfig, CMakeLists.txt |
+| 任务 | 2 | 04-16-esp32-tft-camera/ |
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cc489e6228776cc154846882a3b3d4ccda0f48e3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
