@@ -122,6 +122,71 @@ EventGroupHandle_t system_event_group;
 #define STATE_UPLOADING_BIT      BIT8   // 图片上传中 (显示HTTPS上传进度)
 ```
 
+### 状态监听任务的正确写法 (2026-04-16更新)
+
+**问题**: 使用`xEventGroupWaitBits()`监听状态变化，但UI不更新
+
+**原因**: `xEventGroupWaitBits()`在状态位一直为1时会立即返回，无法检测真正的状态变化
+
+#### Wrong (无法检测状态变化)
+```c
+void state_monitor_task(void *pvParameters) {
+    EventGroupHandle_t event_group = state_machine_get_event_group();
+
+    while (1) {
+        // ❌ 如果STATE_IDLE_BIT一直为1，会立即返回，不等待变化
+        EventBits_t bits = xEventGroupWaitBits(
+            event_group,
+            STATE_IDLE_BIT | STATE_RECORDING_BIT | STATE_PLAYING_BIT,
+            pdFALSE,  // 不清除位
+            pdFALSE,  // 任意位满足即可
+            pdMS_TO_TICKS(1000)
+        );
+
+        if (bits & STATE_IDLE_BIT) {
+            update_ui_idle();  // 只在第一次执行，后续不会触发
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
+```
+
+#### Correct (正确检测状态变化)
+```c
+void state_monitor_task(void *pvParameters) {
+    EventGroupHandle_t event_group = state_machine_get_event_group();
+    EventBits_t last_state = 0;
+
+    while (1) {
+        // ✅ 直接获取当前状态
+        EventBits_t current_state = xEventGroupGetBits(event_group);
+
+        // ✅ 只在状态真正变化时更新UI
+        if (current_state != last_state) {
+            ESP_LOGI(TAG, "状态变化: 0x%02X -> 0x%02X", last_state, current_state);
+
+            if (current_state & STATE_IDLE_BIT) {
+                update_ui_idle();
+            } else if (current_state & STATE_RECORDING_BIT) {
+                update_ui_recording();
+            } else if (current_state & STATE_PLAYING_BIT) {
+                update_ui_playing();
+            }
+
+            last_state = current_state;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));  // 100ms检查一次
+    }
+}
+```
+
+**关键点**:
+- 使用`xEventGroupGetBits()`直接获取当前状态
+- 保存`last_state`进行比较，只在变化时更新UI
+- 轮询间隔100ms，平衡响应性和CPU占用
+
 ### PRD 核心要求
 
 - **播放后强制冷却 3秒**: 使用 `vTaskDelay(pdMS_TO_TICKS(3000))` 屏蔽麦克风
@@ -146,25 +211,88 @@ EventGroupHandle_t system_event_group;
 ```c
 // 必须创建 LVGL 互斥锁
 SemaphoreHandle_t lvgl_mutex;
+static lv_display_t *lvgl_display = NULL;  // 保存display句柄用于强制刷新
 
 // UI 刷新任务
 void lvgl_task(void *pvParameters) {
     while (1) {
-        if (xSemaphoreTake(lvgl_mutex, portMAX_DELAY)) {
-            lv_task_handler();  // LVGL 核心刷新
+        if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            lv_timer_handler();  // LVGL v9核心刷新
             xSemaphoreGive(lvgl_mutex);
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(5));  // 200Hz刷新率
     }
 }
 
 // 其他任务更新 UI 时也必须加锁
 void update_ui_from_other_task() {
-    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
-    lv_label_set_text(label, "新文本");
-    xSemaphoreGive(lvgl_mutex);
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        lv_label_set_text(label, "新文本");
+
+        // CRITICAL: LVGL v9必须强制立即刷新!
+        lv_obj_invalidate(label);       // 标记对象需要重绘
+        lv_refr_now(lvgl_display);      // 立即强制刷新显示器
+
+        xSemaphoreGive(lvgl_mutex);
+    }
 }
 ```
+
+### LVGL v9刷新机制 (CRITICAL! - 2026-04-16更新)
+
+**问题**: 调用`lv_label_set_text()`或`lv_obj_set_style_bg_color()`后，屏幕不刷新
+
+**原因**: LVGL v9的刷新是**异步的**
+- `lv_obj_invalidate(obj)`: 只是标记对象为"脏"，等待下次刷新周期
+- 如果刷新任务延迟或被阻塞，UI更新不会立即显示
+
+**解决方案**: 使用`lv_refr_now()`强制立即刷新
+
+#### Wrong (屏幕不更新)
+```c
+void set_wifi_status(bool connected) {
+    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
+
+    if (connected) {
+        lv_label_set_text(wifi_icon, "WiFi:ON");
+        lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0x00FF00), 0);
+    }
+
+    // ❌ 只标记需要重绘，但不会立即刷新
+    lv_obj_invalidate(wifi_icon);
+
+    xSemaphoreGive(lvgl_mutex);
+}
+// 结果: 日志显示已更新，但屏幕还是显示旧内容
+```
+
+#### Correct (立即刷新)
+```c
+void set_wifi_status(bool connected) {
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (connected) {
+            lv_label_set_text(wifi_icon, "WiFi:ON");
+            lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0x00FF00), 0);
+        }
+
+        // ✅ 强制立即刷新
+        lv_obj_invalidate(wifi_icon);       // 标记需要重绘
+        lv_refr_now(lvgl_display);          // 立即刷新显示器 ← 关键!
+
+        xSemaphoreGive(lvgl_mutex);
+    }
+}
+// 结果: 屏幕立即显示新内容
+```
+
+**适用场景**:
+- 状态更新 (WiFi/MQTT连接状态)
+- 用户交互响应 (按钮点击、触摸事件)
+- 远程控制指令 (MQTT下发的UI更新)
+
+**性能影响**: `lv_refr_now()`会立即触发完整刷新周期，频繁调用可能影响性能
+- ✅ 状态变化时调用 (低频)
+- ❌ 不要在动画循环中调用 (高频)
 
 ### 表情映射 (情绪标签 → UI 动画)
 
@@ -178,6 +306,41 @@ void update_ui_from_other_task() {
 **图片资源处理**:
 - 使用 LVGL 的图片转换工具生成 C 数组
 - 存储到 Flash，运行时加载到 PSRAM
+
+### LVGL v9容器样式 (2026-04-16更新)
+
+**问题**: 容器背景色显示异常（如设置#222222灰色，实际显示绿色）
+
+**原因**: LVGL v9容器默认有`padding`，导致背景色未填充整个区域
+
+**解决方案**: 显式清除padding
+
+#### Wrong (背景色异常)
+```c
+lv_obj_t *status_bar = lv_obj_create(lv_screen_active());
+lv_obj_set_size(status_bar, 240, 30);
+lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x222222), 0);
+// ❌ 缺少padding设置，容器内部留白，背景色不完整
+```
+
+#### Correct (背景色正确)
+```c
+lv_obj_t *status_bar = lv_obj_create(lv_screen_active());
+lv_obj_set_size(status_bar, 240, 30);
+lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x222222), 0);
+lv_obj_set_style_border_width(status_bar, 0, 0);
+lv_obj_set_style_radius(status_bar, 0, 0);
+lv_obj_set_style_pad_all(status_bar, 0, 0);  // ✅ 清除所有padding
+```
+
+**适用场景**:
+- 全屏容器 (背景必须填满)
+- 状态栏/工具栏 (无边距设计)
+
+**特殊情况**: 字幕区域需要文字边距时，设置合理的padding
+```c
+lv_obj_set_style_pad_all(subtitle_container, 10, 0);  // 10px padding用于文字边距
+```
 
 ---
 
@@ -331,6 +494,7 @@ emqx/system/logs                        # 全局日志主题
 - 播放后强制3秒冷却
 - MQTT断线自动重连
 - **所有代码的注释必须使用中文**
+- **每次写完代码后必须使用codex MCP工具进行代码审查** ← CRITICAL!
 
 ### ❌ DON'T
 
@@ -338,7 +502,50 @@ emqx/system/logs                        # 全局日志主题
 - ❌ 不要跳过冷却期(会导致回声)
 - ❌ 不要在PSRAM<8MB的芯片上跑LVGL全帧缓冲
 - ❌ **写完代码之后不需要写README.md等文档**
+- ❌ **不要跳过代码审查直接提交代码**
 
 ---
 
-**总结**: 复用官方代码 + 状态机管理 + LVGL UI + 性能优化
+## 代码审查规范 (MANDATORY)
+
+**每次编写/修改代码后，必须按以下顺序进行审查**:
+
+### 1. 自测 (开发者自己完成)
+```bash
+# ESP-IDF项目编译测试
+idf.py build
+
+# 检查编译警告
+idf.py build 2>&1 | grep "warning:"
+
+# 如果有条件，烧录到设备进行功能测试
+idf.py flash monitor
+```
+
+### 2. codex MCP代码审查 (CRITICAL!)
+
+**在提交代码前，必须调用codex MCP工具进行全面审查**
+
+codex MCP会自动检查:
+- [ ] 是否复用了现有官方代码/库 (禁止造轮子)
+- [ ] FreeRTOS任务/互斥锁使用是否正确
+- [ ] 内存分配是否使用PSRAM
+- [ ] LVGL UI操作是否加锁
+- [ ] 状态机状态转换是否合理
+- [ ] 代码注释是否使用中文
+- [ ] 配置外部化 (不硬编码参数)
+- [ ] TLS/SSL配置是否安全
+
+**使用方法**: 在代码编写完成后，调用MCP工具
+
+### 3. 审查通过后才能提交
+
+```bash
+# 只有在codex MCP审查通过后才能提交
+git add <修改的文件>
+git commit -m "feat(scope): 描述"
+```
+
+---
+
+**总结**: 复用官方代码 + 状态机管理 + LVGL UI + 性能优化 + **代码审查**

@@ -26,7 +26,7 @@
 // 功放 (MAX98357A) - I2S_NUM_1
 #define I2S_SPK_BCLK   GPIO_NUM_2
 #define I2S_SPK_WS     GPIO_NUM_1
-#define I2S_SPK_DOUT   GPIO_NUM_42
+#define I2S_SPK_DOUT   GPIO_NUM_4
 
 // ==================== 音频参数 ====================
 #define SAMPLE_RATE         8000    // 采样率 8kHz

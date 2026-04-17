@@ -216,12 +216,17 @@ python3 ./.trellis/scripts/task.py create "<title>" --slug <task-name>
    --> Run project's lint/test commands (see spec docs)
    --> Manual feature testing
 
-4. Commit code
+4. Code review with codex MCP (MANDATORY!)
+   --> Call MCP tool for automated code review
+   --> Fix all issues found by codex MCP
+   --> Re-run self-test after fixes
+
+5. Commit code (only after codex MCP approval)
    --> git add <files>
    --> git commit -m "type(scope): description"
        Format: feat/fix/docs/refactor/test/chore
 
-5. Record session (one command)
+6. Record session (one command)
    --> python3 ./.trellis/scripts/add_session.py --title "Title" --commit "hash"
 ```
 
@@ -231,10 +236,12 @@ python3 ./.trellis/scripts/task.py create "<title>" --slug <task-name>
 - [OK] Lint checks pass (project-specific command)
 - [OK] Type checks pass (if applicable)
 - [OK] Manual feature testing passes
+- [OK] **codex MCP code review passes** ← MANDATORY!
 
 **Project-specific checks**:
 - See `.trellis/spec/frontend/quality-guidelines.md` for frontend
 - See `.trellis/spec/backend/quality-guidelines.md` for backend
+- See `.trellis/spec/guides/embedded-guidelines.md` for embedded (ESP32)
 
 ---
 

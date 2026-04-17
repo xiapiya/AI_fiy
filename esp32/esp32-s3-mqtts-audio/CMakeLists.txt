@@ -3,6 +3,9 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+# 设置自定义分区表
+set(PARTITION_CSV_PATH "${CMAKE_CURRENT_SOURCE_DIR}/partitions.csv")
+
 # 包含ESP-IDF项目配置
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

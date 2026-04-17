@@ -35,6 +35,7 @@ These guides help you **ask the right questions before coding**.
 |-------|---------|-------------|
 | **[Reuse-First Principle](./reuse-first-principle.md)** | **禁止造轮子,优先复用** | **开发任何功能前必读** |
 | **[Embedded Guidelines](./embedded-guidelines.md)** | **ESP32-S3嵌入式开发规范** | **开发硬件功能时必读** |
+| **[LVGL ESP32 Guidelines](./lvgl-esp32-guidelines.md)** | **LVGL v9 + ESP32-S3开发规范** | **开发TFT UI功能时必读** |
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 
@@ -56,9 +57,19 @@ These guides help you **ask the right questions before coding**.
 - [ ] 开发ESP32-S3硬件功能
 - [ ] 集成I2S音频/摄像头/TFT屏幕
 - [ ] 处理MQTT/HTTP通信
-- [ ] 优化LVGL UI性能
+- [ ] 优化FreeRTOS任务调度
 
 → Read [Embedded Guidelines](./embedded-guidelines.md)
+
+### When to Think About LVGL UI Development
+
+- [ ] 开发TFT屏幕UI功能
+- [ ] UI状态不更新/刷新延迟
+- [ ] 容器背景色显示异常
+- [ ] FreeRTOS状态监听任务
+- [ ] LVGL线程安全问题
+
+→ Read [LVGL ESP32 Guidelines](./lvgl-esp32-guidelines.md)
 
 ### When to Think About Cross-Layer Issues
 

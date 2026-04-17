@@ -29,10 +29,10 @@
 // 2. 修改 MQTT_USERNAME 和 MQTT_PASSWORD 为实际的MQTT认证信息
 // 3. 修改 MQTT_CLIENT_ID 为唯一的设备ID
 // 4. 替换 certs/ca.pem 为实际的服务器CA证书
-#define MQTT_BROKER_URI    "mqtts://your-domain.com:8883"  // 需要修改为实际云端地址
-#define MQTT_USERNAME      "esp32_device"                  // 需要修改为实际用户名
-#define MQTT_PASSWORD      "your_password"                 // 需要修改为实际密码
-#define MQTT_CLIENT_ID     "esp32_s3_001"                  // 设备ID (建议使用MAC地址)
+#define MQTT_BROKER_URI    "mqtts://103.73.161.244:8883"  // 需要修改为实际云端地址
+#define MQTT_USERNAME      "xiapiyaesp32"                  // 需要修改为实际用户名
+#define MQTT_PASSWORD      "wzj123456"                 // 需要修改为实际密码
+#define MQTT_CLIENT_ID     "xiapiya_s3_001"                  // 设备ID (建议使用MAC地址)
 
 #define MQTT_KEEPALIVE_SEC     60   // 心跳间隔60秒
 #define MQTT_RECONNECT_TIMEOUT_MS 5000  // 重连超时5秒

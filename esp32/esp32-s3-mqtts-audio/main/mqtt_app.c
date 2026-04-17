@@ -1,6 +1,6 @@
 /**
  * @file mqtt_app.c
- * @brief MQTTS客户端实现
+ * @brief MQTTS客户端实现 (V4.0 大包拼接重构版)
  */
 
 #include "mqtt_app.h"
@@ -28,6 +28,13 @@ static mqtt_control_received_cb_t control_callback = NULL;
 
 // 音频解码缓冲区(动态分配到PSRAM)
 static uint8_t *audio_decode_buffer = NULL;
+
+// ==================== 大包拼接专用缓冲区 ====================
+static char *rx_buffer = NULL;
+static int rx_offset = 0;
+static bool is_receiving_audio = false; // 标记当前是否正在接收碎片的音频大包
+#define MAX_RX_BUFFER_SIZE (128 * 1024) // 预留128KB，足够存放3-5秒的Base64音频
+// ==========================================================
 
 // MQTT主题字符串缓冲区
 static char topic_audio_upload[128];
@@ -99,37 +106,84 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base,
             break;
 
         case MQTT_EVENT_DATA:
-            ESP_LOGI(TAG, "收到MQTT消息: topic=%.*s, data_len=%d",
-                     event->topic_len, event->topic, event->data_len);
+            // 优化日志打印，避免碎片刷屏
+            if (event->current_data_offset == 0) {
+                ESP_LOGI(TAG, "新消息到达: topic=%.*s, 总大小=%d字节", 
+                         event->topic_len, event->topic, event->total_data_len);
+            }
 
-            // 处理音频下发消息
-            if (strncmp(event->topic, topic_audio_play, event->topic_len) == 0) {
-                if (audio_callback != NULL && audio_decode_buffer != NULL) {
-                    // Base64解码音频数据
-                    size_t decoded_len = RECORD_BUFFER_SIZE * 2;
-
-                    esp_err_t ret = base64_decode_audio(event->data, event->data_len,
-                                                        audio_decode_buffer, &decoded_len);
-                    if (ret == ESP_OK) {
-                        ESP_LOGI(TAG, "音频解码成功: %d字节", decoded_len);
-                        audio_callback(audio_decode_buffer, decoded_len);
-                    } else {
-                        ESP_LOGE(TAG, "音频解码失败");
+            // 1. 判断是否是新消息的开头，以此决定数据的归属
+            if (event->current_data_offset == 0) {
+                if (strncmp(event->topic, topic_audio_play, event->topic_len) == 0) {
+                    is_receiving_audio = true;
+                    rx_offset = 0; // 重置拼接偏移量
+                    
+                    // 如果还没分配内存，分配一块大PSRAM给它
+                    if (rx_buffer == NULL) {
+                        rx_buffer = heap_caps_malloc(MAX_RX_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
+                        if (rx_buffer == NULL) {
+                            ESP_LOGE(TAG, "PSRAM分配大包接收缓冲区失败!");
+                            is_receiving_audio = false;
+                        } else {
+                            ESP_LOGI(TAG, "成功分配 %d 字节碎片拼接缓冲区", MAX_RX_BUFFER_SIZE);
+                        }
                     }
+                } 
+                else if (strncmp(event->topic, topic_control, event->topic_len) == 0) {
+                    is_receiving_audio = false;
+                    
+                    // 控制指令通常很短，不会分包，直接处理
+                    if (control_callback != NULL) {
+                        static char cmd_buffer[256];
+                        size_t copy_len = (event->data_len < sizeof(cmd_buffer) - 1) ? 
+                                          event->data_len : sizeof(cmd_buffer) - 1;
+                        memcpy(cmd_buffer, event->data, copy_len);
+                        cmd_buffer[copy_len] = '\0';
+                        ESP_LOGI(TAG, "收到控制指令: %s", cmd_buffer);
+                        control_callback(cmd_buffer);
+                    }
+                } else {
+                    is_receiving_audio = false; // 未知主题忽略
                 }
             }
-            // 处理控制指令
-            else if (strncmp(event->topic, topic_control, event->topic_len) == 0) {
-                if (control_callback != NULL) {
-                    // 复制控制指令字符串(确保null结尾)
-                    static char cmd_buffer[256];
-                    size_t copy_len = (event->data_len < sizeof(cmd_buffer) - 1) ?
-                                      event->data_len : sizeof(cmd_buffer) - 1;
-                    memcpy(cmd_buffer, event->data, copy_len);
-                    cmd_buffer[copy_len] = '\0';
 
-                    ESP_LOGI(TAG, "收到控制指令: %s", cmd_buffer);
-                    control_callback(cmd_buffer);
+            // 2. 如果当前正在接收音频大包，执行碎片拼接
+            if (is_receiving_audio && rx_buffer != NULL) {
+                if (rx_offset + event->data_len <= MAX_RX_BUFFER_SIZE) {
+                    memcpy(rx_buffer + rx_offset, event->data, event->data_len);
+                    rx_offset += event->data_len;
+                } else {
+                    ESP_LOGE(TAG, "警告：音频大包超出缓冲区上限 (%d 字节)!", MAX_RX_BUFFER_SIZE);
+                    is_receiving_audio = false;
+                    rx_offset = 0;
+                }
+
+                // 3. 检查是否已经收齐所有碎片
+                if (rx_offset == event->total_data_len) {
+                    ESP_LOGI(TAG, "========================================");
+                    ESP_LOGI(TAG, ">>> 音频大包拼接完成: 共 %d 字节 <<<", rx_offset);
+                    ESP_LOGI(TAG, "========================================");
+
+                    if (audio_callback != NULL && audio_decode_buffer != NULL) {
+                        // 补齐字符串结束符，防止越界
+                        if (rx_offset < MAX_RX_BUFFER_SIZE) {
+                            rx_buffer[rx_offset] = '\0';
+                        }
+
+                        size_t decoded_len = RECORD_BUFFER_SIZE * 2;
+                        esp_err_t ret = base64_decode_audio(rx_buffer, rx_offset, audio_decode_buffer, &decoded_len);
+                        
+                        if (ret == ESP_OK) {
+                            ESP_LOGI(TAG, ">>> 音频解码成功: %d 字节 <<<", decoded_len);
+                            audio_callback(audio_decode_buffer, decoded_len);
+                        } else {
+                            ESP_LOGE(TAG, ">>> 音频解码失败 <<<");
+                        }
+                    }
+
+                    // 释放状态，准备迎接下一个包
+                    is_receiving_audio = false;
+                    rx_offset = 0;
                 }
             }
             break;
@@ -185,6 +239,7 @@ esp_err_t mqtt_app_init(mqtt_audio_received_cb_t audio_cb,
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = MQTT_BROKER_URI,
         .broker.verification.certificate = (const char *)ca_pem_start,
+        .broker.verification.skip_cert_common_name_check = true,
         .credentials.client_id = MQTT_CLIENT_ID,
         .credentials.username = MQTT_USERNAME,
         .credentials.authentication.password = MQTT_PASSWORD,
@@ -316,5 +371,11 @@ void mqtt_app_stop(void)
         heap_caps_free(audio_decode_buffer);
         audio_decode_buffer = NULL;
         ESP_LOGI(TAG, "音频解码缓冲区已释放");
+    }
+    
+    // 释放大包拼接缓冲区
+    if (rx_buffer != NULL) {
+        heap_caps_free(rx_buffer);
+        rx_buffer = NULL;
     }
 }

@@ -1,0 +1,4 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/guides/embedded-guidelines.md", "reason": "ESP32-S3嵌入式开发规范,包含esp_lcd和LVGL集成要求"}
+{"file": ".trellis/spec/guides/reuse-first-principle.md", "reason": "禁止造轮子,必须复用ESP-IDF官方示例"}
+{"file": ".trellis/tasks/04-16-esp32-tft-camera/prd.md", "reason": "TFT屏幕和摄像头任务PRD,包含硬件引脚配置"}

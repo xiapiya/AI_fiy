@@ -25,6 +25,8 @@
 #include "mqtt_app.h"
 #include "vad.h"
 #include "state_machine.h"
+#include "tft_display.h"
+#include "lvgl_ui.h"
 
 static const char *TAG = "MAIN";
 
@@ -311,8 +313,25 @@ void app_main(void)
         return;
     }
 
+    // ==================== 初始化TFT显示屏 ====================
+    esp_lcd_panel_handle_t panel_handle = NULL;
+    ret = tft_display_init(&panel_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "TFT初始化失败");
+        // TFT失败不影响核心功能，继续运行
+    } else {
+        // ==================== 初始化LVGL UI ====================
+        ret = lvgl_ui_init(panel_handle);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "LVGL初始化失败");
+        } else {
+            // 设置WiFi连接状态
+            lvgl_ui_set_wifi_status(true);
+        }
+    }
+
     // ==================== 初始化VAD ====================
-    vad_init(1000.0);  // 能量阈值(安静时200-1000,说话时>2000)
+    vad_init(1500.0);  // 能量阈值(安静时200-1000,说话时>2000)
 
     // ==================== 初始化MQTT ====================
     state_machine_enter_tls_handshake();
@@ -334,8 +353,10 @@ void app_main(void)
     if (mqtt_is_connected()) {
         ESP_LOGI(TAG, "MQTT连接成功!");
         state_machine_enter_idle();
+        lvgl_ui_set_mqtt_status(true);
     } else {
         ESP_LOGE(TAG, "MQTT连接超时");
+        lvgl_ui_set_mqtt_status(false);
         return;
     }
 
