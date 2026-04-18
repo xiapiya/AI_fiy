@@ -9,7 +9,12 @@ idf_component_register(
         "state_machine.c"
         "tft_display.c"
         "lvgl_ui.c"
-    INCLUDE_DIRS "."
+        # SquareLine Studio生成的UI文件
+        "AIUI/ui.c"
+        "AIUI/ui_helpers.c"
+        "AIUI/screens/ui_MainScreen.c"
+        "AIUI/components/ui_comp_hook.c"
+    INCLUDE_DIRS "." "AIUI"
     PRIV_REQUIRES
         driver
         esp_wifi

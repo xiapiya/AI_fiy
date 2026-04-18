@@ -1,8 +1,8 @@
 /**
  * @file lvgl_ui.c
- * @brief LVGL情感化UI实现
+ * @brief LVGL情感化UI实现 (集成SquareLine Studio生成的UI)
  *
- * 使用LVGL v9实现情绪表情显示系统
+ * 使用LVGL v9 + SquareLine Studio实现情绪表情显示系统
  */
 
 #include "lvgl_ui.h"
@@ -15,22 +15,28 @@
 #include "tft_display.h"
 #include "state_machine.h"
 
+// 引入SquareLine Studio生成的UI
+#include "AIUI/ui.h"
+#include "AIUI/screens/ui_MainScreen.h"
+
 static const char *TAG = "LVGL_UI";
 
 // ==================== LVGL全局变量 ====================
 static lv_display_t *lvgl_display = NULL;
 static SemaphoreHandle_t lvgl_mutex = NULL;
 
-// ==================== UI组件 ====================
-static lv_obj_t *wifi_icon = NULL;
-static lv_obj_t *mqtt_icon = NULL;
-static lv_obj_t *emotion_obj = NULL;
-static lv_obj_t *subtitle_label = NULL;
-
 // ==================== 状态变量 ====================
 static emotion_t current_emotion = EMOTION_NEUTRAL;
 static bool wifi_connected = false;
 static bool mqtt_connected = false;
+
+// ==================== UI状态枚举 ====================
+typedef enum {
+    UI_STATE_LISTENING = 0,  // 倾听模式：静态圆形 + 灰色 + "..."
+    UI_STATE_SPEAKING  = 1,  // 说话模式：呼吸动画 + 绿色
+    UI_STATE_THINKING  = 2,  // 思考模式：呼吸动画 + 金色
+    UI_STATE_CAPTURING = 3,  // 拍照模式：呼吸动画 + 蓝色
+} ui_emotion_state_t;
 
 // ==================== LVGL显示刷新回调 ====================
 /**
@@ -52,86 +58,100 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
     lv_display_flush_ready(disp);
 }
 
-// ==================== 创建UI组件 ====================
+// ==================== UI更新函数 ====================
 /**
- * @brief 创建状态栏
+ * @brief 更新网络状态图标
+ *
+ * @param wifi_ok WiFi连接状态 (true=已连接, false=断开)
+ * @param mqtt_ok MQTT连接状态 (true=已连接, false=断开)
  */
-static void create_status_bar(void)
+static void update_network_status(bool wifi_ok, bool mqtt_ok)
 {
-    // 创建状态栏容器
-    lv_obj_t *status_bar = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(status_bar, TFT_H_RES, 30);
-    lv_obj_set_pos(status_bar, 0, 0);
-    lv_obj_set_style_bg_color(status_bar, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_border_width(status_bar, 0, 0);
-    lv_obj_set_style_radius(status_bar, 0, 0);
-    lv_obj_set_style_pad_all(status_bar, 0, 0);  // 清除所有padding
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // WiFi状态: 绿色=正常, 灰色=异常
+        lv_obj_set_style_text_color(
+            ui_label_wifi1,
+            wifi_ok ? lv_color_hex(0x00FF00) : lv_color_hex(0x808080),
+            0
+        );
 
-    // WiFi状态标签
-    wifi_icon = lv_label_create(status_bar);
-    lv_label_set_text(wifi_icon, "WiFi:OFF");
-    lv_obj_set_pos(wifi_icon, 5, 5);  // Y坐标从7调整为5
-    lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0xFF0000), 0);
+        // MQTT状态: 蓝色=正常, 灰色=异常
+        lv_obj_set_style_text_color(
+            ui_label_mqtt1,
+            mqtt_ok ? lv_color_hex(0x00A8FF) : lv_color_hex(0x808080),
+            0
+        );
 
-    // MQTT状态标签
-    mqtt_icon = lv_label_create(status_bar);
-    lv_label_set_text(mqtt_icon, "MQTT:OFF");
-    lv_obj_set_pos(mqtt_icon, 100, 5);  // Y坐标从7调整为5
-    lv_obj_set_style_text_color(mqtt_icon, lv_color_hex(0xFF0000), 0);
+        // 强制刷新显示
+        lv_obj_invalidate(ui_label_wifi1);
+        lv_obj_invalidate(ui_label_mqtt1);
+        lv_refr_now(lvgl_display);
 
-    ESP_LOGI(TAG, "状态栏创建完成");
+        ESP_LOGI(TAG, "网络状态已更新: WiFi=%s, MQTT=%s",
+                 wifi_ok ? "ON" : "OFF",
+                 mqtt_ok ? "ON" : "OFF");
+
+        xSemaphoreGive(lvgl_mutex);
+    } else {
+        ESP_LOGE(TAG, "获取LVGL互斥锁失败，网络状态更新被跳过");
+    }
 }
 
 /**
- * @brief 创建情绪表情
+ * @brief 切换情绪状态UI
+ *
+ * @param state UI状态（倾听/说话/思考/拍照）
  */
-static void create_emotion_display(void)
+static void change_emotion_state(ui_emotion_state_t state)
 {
-    // 创建中间容器
-    lv_obj_t *emotion_container = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(emotion_container, TFT_H_RES, 200);
-    lv_obj_set_pos(emotion_container, 0, 40);
-    lv_obj_set_style_bg_color(emotion_container, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_border_width(emotion_container, 0, 0);
-    lv_obj_set_style_radius(emotion_container, 0, 0);
-    lv_obj_set_style_pad_all(emotion_container, 0, 0);  // 清除所有padding
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // CRITICAL: 先停止所有动画，再启动新动画
+        lv_anim_del(ui_EmotionCircle1, NULL);
 
-    // 创建情绪表情对象（使用圆形）
-    emotion_obj = lv_obj_create(emotion_container);
-    lv_obj_set_size(emotion_obj, 100, 100);
-    lv_obj_align(emotion_obj, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(emotion_obj, lv_color_hex(0xFFFFFF), 0);  // 默认白色(中性)
-    lv_obj_set_style_border_width(emotion_obj, 0, 0);
-    lv_obj_set_style_pad_all(emotion_obj, 0, 0);  // 清除圆形的padding
+        switch (state) {
+            case UI_STATE_LISTENING:
+                // 倾听模式：静态圆形
+                lv_obj_set_width(ui_EmotionCircle1, 120);
+                lv_obj_set_height(ui_EmotionCircle1, 120);
+                lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0xD3D3D3), 0);
+                lv_label_set_text(ui_uiEmotionLabel1, "...");
+                ESP_LOGI(TAG, "UI状态: 倾听模式");
+                break;
 
-    ESP_LOGI(TAG, "情绪表情创建完成");
-}
+            case UI_STATE_SPEAKING:
+                // 说话模式：呼吸动画 + 绿色
+                lv_label_set_text(ui_uiEmotionLabel1, "");
+                lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0x32CD32), 0);
+                breathe_Animation(ui_EmotionCircle1, 0);
+                ESP_LOGI(TAG, "UI状态: 说话模式");
+                break;
 
-/**
- * @brief 创建字幕区域
- */
-static void create_subtitle_area(void)
-{
-    // 创建字幕容器
-    lv_obj_t *subtitle_container = lv_obj_create(lv_screen_active());
-    lv_obj_set_size(subtitle_container, TFT_H_RES, 80);
-    lv_obj_set_pos(subtitle_container, 0, TFT_V_RES - 80);
-    lv_obj_set_style_bg_color(subtitle_container, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_border_width(subtitle_container, 0, 0);
-    lv_obj_set_style_radius(subtitle_container, 0, 0);
-    lv_obj_set_style_pad_all(subtitle_container, 10, 0);  // 设置10px padding用于文字边距
+            case UI_STATE_THINKING:
+                // 思考模式：呼吸动画 + 金色
+                lv_label_set_text(ui_uiEmotionLabel1, "");
+                lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0xFFD700), 0);
+                breathe_Animation(ui_EmotionCircle1, 0);
+                ESP_LOGI(TAG, "UI状态: 思考模式");
+                break;
 
-    // 创建字幕标签
-    subtitle_label = lv_label_create(subtitle_container);
-    lv_obj_set_width(subtitle_label, TFT_H_RES - 20);
-    lv_obj_align(subtitle_label, LV_ALIGN_CENTER, 0, 0);
-    lv_label_set_text(subtitle_label, "System Ready");
-    lv_obj_set_style_text_color(subtitle_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_align(subtitle_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(subtitle_label, &lv_font_montserrat_20, 0);
-    lv_label_set_long_mode(subtitle_label, LV_LABEL_LONG_WRAP);  // 自动换行
+            case UI_STATE_CAPTURING:
+                // 拍照模式：呼吸动画 + 蓝色
+                lv_label_set_text(ui_uiEmotionLabel1, "");
+                lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0x00A8FF), 0);
+                breathe_Animation(ui_EmotionCircle1, 0);
+                ESP_LOGI(TAG, "UI状态: 拍照模式");
+                break;
+        }
 
-    ESP_LOGI(TAG, "字幕区域创建完成");
+        // 强制刷新显示
+        lv_obj_invalidate(ui_EmotionCircle1);
+        lv_obj_invalidate(ui_uiEmotionLabel1);
+        lv_refr_now(lvgl_display);
+
+        xSemaphoreGive(lvgl_mutex);
+    } else {
+        ESP_LOGE(TAG, "获取LVGL互斥锁失败，UI状态更新被跳过");
+    }
 }
 
 // ==================== LVGL任务 ====================
@@ -180,27 +200,22 @@ static void state_monitor_task(void *pvParameters)
         if (current_state != last_state) {
             ESP_LOGI(TAG, "状态变化检测: 0x%02X -> 0x%02X", last_state, current_state);
 
-            // 根据状态更新UI
+            // 根据状态机状态更新UI
             if (current_state & STATE_IDLE_BIT) {
                 ESP_LOGI(TAG, "进入IDLE状态,更新UI");
-                lvgl_ui_set_emotion(EMOTION_NEUTRAL);
-                lvgl_ui_set_text("Listening...");
-            } else if (current_state & STATE_RECORDING_BIT) {
-                ESP_LOGI(TAG, "进入RECORDING状态,更新UI");
-                lvgl_ui_set_emotion(EMOTION_HAPPY);
-                lvgl_ui_set_text("Recording...");
-            } else if (current_state & STATE_CLOUD_SYNC_BIT) {
-                ESP_LOGI(TAG, "进入CLOUD_SYNC状态,更新UI");
-                lvgl_ui_set_emotion(EMOTION_THINKING);
-                lvgl_ui_set_text("Thinking...");
-            } else if (current_state & STATE_PLAYING_BIT) {
-                ESP_LOGI(TAG, "进入PLAYING状态,更新UI");
-                lvgl_ui_set_emotion(EMOTION_COMFORT);
-                lvgl_ui_set_text("Playing...");
-            } else if (current_state & STATE_TLS_HANDSHAKE_BIT) {
-                ESP_LOGI(TAG, "进入TLS_HANDSHAKE状态,更新UI");
-                lvgl_ui_set_emotion(EMOTION_THINKING);
-                lvgl_ui_set_text("Connecting...");
+                change_emotion_state(UI_STATE_LISTENING);
+            }
+            else if (current_state & (STATE_RECORDING_BIT | STATE_PLAYING_BIT)) {
+                ESP_LOGI(TAG, "进入RECORDING/PLAYING状态,更新UI");
+                change_emotion_state(UI_STATE_SPEAKING);
+            }
+            else if (current_state & (STATE_CLOUD_SYNC_BIT | STATE_TLS_HANDSHAKE_BIT)) {
+                ESP_LOGI(TAG, "进入THINKING状态,更新UI");
+                change_emotion_state(UI_STATE_THINKING);
+            }
+            else if (current_state & STATE_CAPTURING_BIT) {
+                ESP_LOGI(TAG, "进入CAPTURING状态,更新UI");
+                change_emotion_state(UI_STATE_CAPTURING);
             }
 
             last_state = current_state;
@@ -214,7 +229,7 @@ static void state_monitor_task(void *pvParameters)
 esp_err_t lvgl_ui_init(esp_lcd_panel_handle_t panel_handle)
 {
     ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "开始初始化LVGL UI");
+    ESP_LOGI(TAG, "开始初始化LVGL UI (SquareLine Studio)");
     ESP_LOGI(TAG, "========================================");
 
     // 创建互斥锁
@@ -248,18 +263,22 @@ esp_err_t lvgl_ui_init(esp_lcd_panel_handle_t panel_handle)
     lv_display_set_user_data(lvgl_display, panel_handle);
     ESP_LOGI(TAG, "LVGL显示设备创建完成");
 
-    // 创建UI组件
+    // 初始化SquareLine Studio生成的UI
     xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
-
-    // 设置背景色
-    lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), 0);
-
-    create_status_bar();
-    create_emotion_display();
-    create_subtitle_area();
-
+    ui_init();  // ← SquareLine生成的初始化函数
     xSemaphoreGive(lvgl_mutex);
-    ESP_LOGI(TAG, "UI组件创建完成");
+    ESP_LOGI(TAG, "SquareLine Studio UI初始化完成");
+
+    // 验证UI组件是否存在
+    if (ui_EmotionCircle1 == NULL) {
+        ESP_LOGE(TAG, "ui_EmotionCircle1未初始化！");
+        return ESP_FAIL;
+    }
+    if (ui_uiEmotionLabel1 == NULL) {
+        ESP_LOGE(TAG, "ui_uiEmotionLabel1未初始化！");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "UI组件验证通过");
 
     // 创建LVGL刷新任务
     xTaskCreate(lvgl_task, "LVGL_Task", 8192, NULL, 2, NULL);
@@ -278,121 +297,61 @@ esp_err_t lvgl_ui_init(esp_lcd_panel_handle_t panel_handle)
 
 void lvgl_ui_set_emotion(emotion_t emotion)
 {
-    if (emotion_obj == NULL) {
+    if (ui_EmotionCircle1 == NULL) {
         ESP_LOGW(TAG, "情绪对象未初始化,跳过更新");
         return;
     }
 
-    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        current_emotion = emotion;
-
-        // 根据情绪设置颜色
-        switch (emotion) {
-            case EMOTION_NEUTRAL:
-                lv_obj_set_style_bg_color(emotion_obj, lv_color_hex(0xFFFFFF), 0);  // 白色
-                ESP_LOGI(TAG, "情绪已更新: NEUTRAL (白色)");
-                break;
-            case EMOTION_HAPPY:
-                lv_obj_set_style_bg_color(emotion_obj, lv_color_hex(0xFFD700), 0);  // 金色
-                ESP_LOGI(TAG, "情绪已更新: HAPPY (金色)");
-                break;
-            case EMOTION_SAD:
-                lv_obj_set_style_bg_color(emotion_obj, lv_color_hex(0x4169E1), 0);  // 蓝色
-                ESP_LOGI(TAG, "情绪已更新: SAD (蓝色)");
-                break;
-            case EMOTION_COMFORT:
-                lv_obj_set_style_bg_color(emotion_obj, lv_color_hex(0x32CD32), 0);  // 绿色
-                ESP_LOGI(TAG, "情绪已更新: COMFORT (绿色)");
-                break;
-            case EMOTION_THINKING:
-                lv_obj_set_style_bg_color(emotion_obj, lv_color_hex(0x808080), 0);  // 灰色
-                ESP_LOGI(TAG, "情绪已更新: THINKING (灰色)");
-                break;
-        }
-
-        lv_obj_invalidate(emotion_obj);  // 标记需要重绘
-        lv_refr_now(lvgl_display);       // 立即强制刷新显示
-
-        xSemaphoreGive(lvgl_mutex);
-    } else {
-        ESP_LOGE(TAG, "获取LVGL互斥锁失败!");
+    // 映射emotion_t到ui_emotion_state_t
+    ui_emotion_state_t ui_state;
+    switch (emotion) {
+        case EMOTION_NEUTRAL:
+            ui_state = UI_STATE_LISTENING;
+            break;
+        case EMOTION_HAPPY:
+        case EMOTION_COMFORT:
+            ui_state = UI_STATE_SPEAKING;
+            break;
+        case EMOTION_THINKING:
+            ui_state = UI_STATE_THINKING;
+            break;
+        case EMOTION_SAD:
+            ui_state = UI_STATE_CAPTURING;  // 使用蓝色
+            break;
+        default:
+            ui_state = UI_STATE_LISTENING;
+            break;
     }
+
+    current_emotion = emotion;
+    change_emotion_state(ui_state);
 }
 
 void lvgl_ui_set_text(const char *text)
 {
-    if (subtitle_label == NULL || text == NULL) {
-        ESP_LOGW(TAG, "字幕标签未初始化或文本为空,跳过更新");
-        return;
-    }
-
-    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        lv_label_set_text(subtitle_label, text);
-        ESP_LOGI(TAG, "字幕已更新: %s", text);
-
-        lv_obj_invalidate(subtitle_label);  // 标记需要重绘
-        lv_refr_now(lvgl_display);          // 立即强制刷新显示
-
-        xSemaphoreGive(lvgl_mutex);
-    } else {
-        ESP_LOGE(TAG, "获取LVGL互斥锁失败!");
-    }
+    // SquareLine Studio生成的UI中没有字幕标签
+    // 暂时记录日志，后续可在SquareLine中添加字幕组件
+    ESP_LOGI(TAG, "字幕文本: %s (暂无UI组件)", text ? text : "NULL");
 }
 
 void lvgl_ui_set_wifi_status(bool connected)
 {
-    if (wifi_icon == NULL) {
+    if (ui_label_wifi1 == NULL) {
         ESP_LOGW(TAG, "WiFi图标未初始化,跳过更新");
         return;
     }
 
-    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        wifi_connected = connected;
-
-        if (connected) {
-            lv_label_set_text(wifi_icon, "WiFi:ON");
-            lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0x00FF00), 0);  // 绿色(已连接)
-            ESP_LOGI(TAG, "WiFi状态已更新: ON (绿色)");
-        } else {
-            lv_label_set_text(wifi_icon, "WiFi:OFF");
-            lv_obj_set_style_text_color(wifi_icon, lv_color_hex(0xFF0000), 0);  // 红色(未连接)
-            ESP_LOGI(TAG, "WiFi状态已更新: OFF (红色)");
-        }
-
-        lv_obj_invalidate(wifi_icon);  // 标记需要重绘
-        lv_refr_now(lvgl_display);     // 立即强制刷新显示
-
-        xSemaphoreGive(lvgl_mutex);
-    } else {
-        ESP_LOGE(TAG, "获取LVGL互斥锁失败!");
-    }
+    wifi_connected = connected;
+    update_network_status(wifi_connected, mqtt_connected);
 }
 
 void lvgl_ui_set_mqtt_status(bool connected)
 {
-    if (mqtt_icon == NULL) {
+    if (ui_label_mqtt1 == NULL) {
         ESP_LOGW(TAG, "MQTT图标未初始化,跳过更新");
         return;
     }
 
-    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        mqtt_connected = connected;
-
-        if (connected) {
-            lv_label_set_text(mqtt_icon, "MQTT:ON");
-            lv_obj_set_style_text_color(mqtt_icon, lv_color_hex(0x00FF00), 0);  // 绿色(已连接)
-            ESP_LOGI(TAG, "MQTT状态已更新: ON (绿色)");
-        } else {
-            lv_label_set_text(mqtt_icon, "MQTT:OFF");
-            lv_obj_set_style_text_color(mqtt_icon, lv_color_hex(0xFF0000), 0);  // 红色(未连接)
-            ESP_LOGI(TAG, "MQTT状态已更新: OFF (红色)");
-        }
-
-        lv_obj_invalidate(mqtt_icon);  // 标记需要重绘
-        lv_refr_now(lvgl_display);     // 立即强制刷新显示
-
-        xSemaphoreGive(lvgl_mutex);
-    } else {
-        ESP_LOGE(TAG, "获取LVGL互斥锁失败!");
-    }
+    mqtt_connected = connected;
+    update_network_status(wifi_connected, mqtt_connected);
 }
