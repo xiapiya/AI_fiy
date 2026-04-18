@@ -593,3 +593,35 @@ void state_monitor_task(void *pvParameters) {
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: 更新TFT UI开发规范 - 集成SquareLine Studio
+
+**Date**: 2026-04-18
+**Task**: 更新TFT UI开发规范 - 集成SquareLine Studio
+
+### Summary
+
+基于实际生成的SquareLine Studio代码，创建完整集成指南并修正所有规范文档中的变量名
+
+### Main Changes
+
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `50b4649` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
