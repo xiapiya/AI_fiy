@@ -213,10 +213,11 @@ static void state_monitor_task(void *pvParameters)
                 ESP_LOGI(TAG, "进入THINKING状态,更新UI");
                 change_emotion_state(UI_STATE_THINKING);
             }
-            else if (current_state & STATE_CAPTURING_BIT) {
-                ESP_LOGI(TAG, "进入CAPTURING状态,更新UI");
-                change_emotion_state(UI_STATE_CAPTURING);
-            }
+            // TODO: 拍照功能未实现，暂时注释
+            // else if (current_state & STATE_CAPTURING_BIT) {
+            //     ESP_LOGI(TAG, "进入CAPTURING状态,更新UI");
+            //     change_emotion_state(UI_STATE_CAPTURING);
+            // }
 
             last_state = current_state;
         }

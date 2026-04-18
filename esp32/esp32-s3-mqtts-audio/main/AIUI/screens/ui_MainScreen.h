@@ -10,9 +10,9 @@
 extern "C" {
 #endif
 
-// SCREEN: ui_Screen1
-extern void ui_Screen1_screen_init(void);
-extern void ui_Screen1_screen_destroy(void);
+// SCREEN: ui_MainScreen
+extern void ui_MainScreen_screen_init(void);
+extern void ui_MainScreen_screen_destroy(void);
 extern lv_obj_t * ui_MainScreen;
 extern lv_obj_t * ui_Status_Bar1;
 extern lv_obj_t * ui_label_wifi1;
