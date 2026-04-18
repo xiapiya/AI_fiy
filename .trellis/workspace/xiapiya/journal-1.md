@@ -625,3 +625,221 @@ void state_monitor_task(void *pvParameters) {
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: 修复ESP32-S3 SquareLine Studio UI集成编译错误
+
+**Date**: 2026-04-18
+**Task**: 修复ESP32-S3 SquareLine Studio UI集成编译错误
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+## 会话概述
+
+完成ESP32-S3 TFT屏幕的SquareLine Studio UI集成编译错误修复，解决了4个关键编译问题，成功生成固件。
+
+---
+
+## 主要工作
+
+### 1. 编译环境配置
+- ✅ 配置ESP-IDF v5.5.4环境 (source export.sh)
+- ✅ 使用idf.py build编译ESP32项目
+
+### 2. 编译错误修复 (4个问题)
+
+#### 问题1: 头文件引用路径错误
+**错误**: `ui.h:21` 引用不存在的 `ui_Screen1.h`
+```
+fatal error: ui_Screen1.h: No such file or directory
+   21 | #include "ui_Screen1.h"
+```
+
+**修复**: `main/AIUI/ui.h`
+- 将 `#include "ui_Screen1.h"` 改为 `#include "screens/ui_MainScreen.h"`
+
+---
+
+#### 问题2: 函数声明与实现不匹配
+**错误**: 链接时找不到 `ui_Screen1_screen_init()`
+```
+undefined reference to `ui_Screen1_screen_init'
+```
+
+**根因**: SquareLine生成的实际函数名是 `ui_MainScreen_screen_init()`，但头文件声明为 `ui_Screen1_screen_init()`
+
+**修复**: 
+- `main/AIUI/screens/ui_MainScreen.h:14-15`
+  - 函数声明改为 `ui_MainScreen_screen_init()` 和 `ui_MainScreen_screen_destroy()`
+- `main/AIUI/ui.c:78,85`
+  - 函数调用使用正确的 `ui_MainScreen_screen_init()` 和 `ui_MainScreen_screen_destroy()`
+
+---
+
+#### 问题3: 未实现的拍照状态引用
+**错误**: `STATE_CAPTURING_BIT` 未定义
+```
+lvgl_ui.c:216:38: error: 'STATE_CAPTURING_BIT' undeclared
+```
+
+**根因**: 摄像头拍照功能尚未实现，状态机中无此状态位定义
+
+**修复**: `main/lvgl_ui.c:216-219`
+```c
+// TODO: 拍照功能未实现，暂时注释
+// else if (current_state & STATE_CAPTURING_BIT) {
+//     ESP_LOGI(TAG, "进入CAPTURING状态,更新UI");
+//     change_emotion_state(UI_STATE_CAPTURING);
+// }
+```
+
+---
+
+#### 问题4: LVGL字体未启用
+**错误**: `lv_font_montserrat_48` 未定义
+```
+ui_MainScreen.c:75:53: error: 'lv_font_montserrat_48' undeclared
+```
+
+**根因**: SquareLine UI使用48号字体，但ESP-IDF配置未启用
+
+**修复**:
+- `sdkconfig.defaults:87` - 添加 `CONFIG_LV_FONT_MONTSERRAT_48=y`
+- `main/lv_conf.h:77` - 启用 `#define LV_FONT_MONTSERRAT_48 1`
+- 删除 `sdkconfig` 并重新编译，让新配置生效
+
+---
+
+### 3. 编译成功
+
+**最终结果**:
+```
+✅ Project build complete
+📦 Binary size: 0x1542f0 bytes (1.33 MB)
+💾 App partition: 0x300000 bytes (3 MB)
+📊 Free space: 0x1abd10 bytes (56%)
+📍 Firmware: build/esp32_s3_mqtts_audio.bin
+```
+
+**编译统计**:
+- 总文件数: 1628个
+- 主要组件: LVGL v9 + SquareLine UI + ESP-IDF v5.5.4
+- 字体支持: Montserrat 14/16/20/48
+
+---
+
+## 技术要点
+
+### SquareLine Studio集成注意事项
+1. **变量名后缀**: SquareLine生成的变量名带实例编号（如 `ui_EmotionCircle1`）
+2. **函数名映射**: Screen名称决定函数名（`ui_MainScreen` → `ui_MainScreen_screen_init()`）
+3. **头文件路径**: 需要使用相对路径引用（`screens/ui_MainScreen.h`）
+4. **字体配置**: 必须在 `sdkconfig.defaults` 中显式启用所需字体
+
+### LVGL v9配置
+- **刷新机制**: 使用 `lv_refr_now()` 强制立即刷新
+- **动画控制**: 切换状态前必须先用 `lv_anim_del()` 停止旧动画
+- **线程安全**: 所有UI操作使用FreeRTOS Mutex保护
+- **内存分配**: 双缓冲区分配到PSRAM (15360 bytes x2)
+
+### 状态机UI联动
+| 状态机状态 | UI模式 | 圆形颜色 | 动画 | 文本 |
+|-----------|--------|---------|------|------|
+| STATE_IDLE | 倾听模式 | 灰色(0xD3D3D3) | 无 | "..." |
+| STATE_RECORDING/PLAYING | 说话模式 | 绿色(0x32CD32) | 呼吸 | 清空 |
+| STATE_CLOUD_SYNC/TLS_HANDSHAKE | 思考模式 | 金色(0xFFD700) | 呼吸 | 清空 |
+| ~~STATE_CAPTURING~~ | ~~拍照模式~~ | ~~蓝色(0x00A8FF)~~ | ~~呼吸~~ | ~~未实现~~ |
+
+---
+
+## 修改的文件
+
+### ESP32项目文件 (5个)
+1. `esp32/esp32-s3-mqtts-audio/main/AIUI/ui.h` - 修正头文件引用路径
+2. `esp32/esp32-s3-mqtts-audio/main/AIUI/screens/ui_MainScreen.h` - 修正函数声明
+3. `esp32/esp32-s3-mqtts-audio/main/lvgl_ui.c` - 注释拍照状态处理
+4. `esp32/esp32-s3-mqtts-audio/main/lv_conf.h` - 启用48号字体
+5. `esp32/esp32-s3-mqtts-audio/sdkconfig.defaults` - 添加字体配置
+
+### 配置文件 (自动生成)
+- `esp32/esp32-s3-mqtts-audio/sdkconfig` - 重新生成 (已删除并重建)
+
+---
+
+## 验收标准
+
+### ✅ 编译验收
+- [x] 编译通过，无警告/错误
+- [x] 固件大小合理 (1.33MB < 3MB分区)
+- [x] 所有LVGL源文件正常编译
+- [x] SquareLine UI组件链接成功
+
+### ⏳ 硬件验收 (待测试)
+- [ ] 烧录到ESP32-S3后，TFT屏幕正常显示
+- [ ] WiFi/MQTT图标颜色正确切换 (绿色/蓝色)
+- [ ] 情绪圆形在不同状态下正确切换
+- [ ] 倾听模式显示"..."静态圆形
+- [ ] 说话/思考模式呼吸动画流畅 (1秒周期，±20px)
+- [ ] UI刷新率≥30FPS
+- [ ] 状态切换延迟<100ms
+
+---
+
+## 已知限制
+
+1. **字幕功能未实现**: SquareLine生成的UI中没有字幕Label组件
+   - 临时方案: `lvgl_ui_set_text()` 仅记录日志
+   - 解决方案: 在SquareLine Studio中添加字幕组件后重新导出
+
+2. **拍照功能未实现**: 摄像头集成尚未完成
+   - 临时方案: UI代码中注释掉 `STATE_CAPTURING` 处理
+   - 解决方案: 完成OV2640集成后启用拍照状态
+
+3. **动画参数固定**: 呼吸动画参数在SquareLine中固定
+   - 参数: ±20px宽高缩放，1000ms周期
+   - 如需调整: 在SquareLine Studio中修改后重新导出
+
+---
+
+## 参考规范
+
+- `.trellis/spec/guides/squareline-studio-integration.md` - SquareLine集成指南
+- `.trellis/spec/guides/lvgl-esp32-guidelines.md` - LVGL v9开发规范
+- `.trellis/spec/guides/embedded-guidelines.md` - ESP32-S3嵌入式规范
+- `esp32/esp32-s3-mqtts-audio/SQUARELINE_UI_INTEGRATION.md` - 实现总结
+
+---
+
+## 下一步工作
+
+1. **硬件测试**: 烧录固件到ESP32-S3，验证TFT屏幕显示和UI动画
+2. **性能测试**: 测量UI刷新率和状态切换延迟
+3. **摄像头集成**: 完成OV2640集成，启用拍照功能
+4. **字幕功能**: 在SquareLine中添加字幕Label组件
+
+---
+
+**核心原则**: 修复编译错误 → 以实际生成的代码为准 → 配置驱动字体启用 → 停动画再切换状态
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `02df4b0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
