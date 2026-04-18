@@ -109,17 +109,78 @@ void app_main(void) {
 EventGroupHandle_t system_event_group;
 
 // V3.2 基础状态
-#define STATE_IDLE_BIT       BIT0   // 待机
-#define STATE_RECORDING_BIT  BIT1   // 录音中
-#define STATE_CAPTURING_BIT  BIT2   // 拍照中
-#define STATE_THINKING_BIT   BIT3   // 推理中
-#define STATE_PLAYING_BIT    BIT4   // 播放中
-#define STATE_COOLDOWN_BIT   BIT5   // 冷却期(3秒)
+#define STATE_IDLE_BIT       BIT0   // 待机 (UI: 倾听模式 - 静态圆形+灰色+"...")
+#define STATE_RECORDING_BIT  BIT1   // 录音中 (UI: 说话模式 - 呼吸动画+绿色)
+#define STATE_CAPTURING_BIT  BIT2   // 拍照中 (UI: 拍照模式 - 呼吸动画+蓝色)
+#define STATE_THINKING_BIT   BIT3   // 推理中 (UI: 思考模式 - 呼吸动画+金色)
+#define STATE_PLAYING_BIT    BIT4   // 播放中 (UI: 说话模式 - 呼吸动画+绿色)
+#define STATE_COOLDOWN_BIT   BIT5   // 冷却期(3秒) (UI: 倾听模式)
 
 // V4.0 新增公网状态
 #define STATE_TLS_HANDSHAKE_BIT  BIT6   // TLS握手中 (显示"安全连接中...")
 #define STATE_CLOUD_SYNC_BIT     BIT7   // 云端同步中 (显示"上行同步中...")
 #define STATE_UPLOADING_BIT      BIT8   // 图片上传中 (显示HTTPS上传进度)
+```
+
+### 状态机与UI联动规范 (基于UI_prd.md)
+
+**核心原则**: 状态机状态变化时，必须同步更新UI
+
+#### 状态到UI的映射表
+
+| 状态机状态 | UI模式 | 圆形尺寸 | 背景色 | 动画 | 文本内容 |
+|-----------|--------|---------|-------|------|---------|
+| `STATE_IDLE` | 倾听模式 | 120x120固定 | 浅灰色(0xD3D3D3) | 无 | "..." |
+| `STATE_RECORDING` | 说话模式 | 动态缩放 | 活力绿色(0x32CD32) | 呼吸动画 | 清空 |
+| `STATE_PLAYING` | 说话模式 | 动态缩放 | 活力绿色(0x32CD32) | 呼吸动画 | 清空 |
+| `STATE_THINKING` | 思考模式 | 动态缩放 | 金色(0xFFD700) | 呼吸动画 | 清空 |
+| `STATE_CAPTURING` | 拍照模式 | 动态缩放 | 蓝色(0x00A8FF) | 呼吸动画 | 清空 |
+| `STATE_CLOUD_SYNC` | 同步模式 | 动态缩放 | 蓝色(0x00A8FF) | 呼吸动画 | 清空 |
+
+#### 状态切换时的UI更新顺序
+
+**关键点**: 必须先停止旧动画，再启动新动画
+
+```c
+void update_ui_for_state(EventBits_t new_state) {
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // 1. 先停止所有动画
+        lv_anim_del(ui_EmotionCircle1, NULL);
+
+        // 2. 根据新状态设置UI
+        if (new_state & STATE_IDLE_BIT) {
+            // 倾听模式: 静态圆形
+            lv_obj_set_size(ui_EmotionCircle1, 120, 120);
+            lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0xD3D3D3), 0);
+            lv_label_set_text(ui_uiEmotionLabel1, "...");
+        }
+        else if (new_state & (STATE_RECORDING_BIT | STATE_PLAYING_BIT)) {
+            // 说话模式: 呼吸动画 + 绿色
+            lv_label_set_text(ui_uiEmotionLabel1, "");
+            lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0x32CD32), 0);
+            breathe_Animation(ui_EmotionCircle1, 0);
+        }
+        else if (new_state & STATE_THINKING_BIT) {
+            // 思考模式: 呼吸动画 + 金色
+            lv_label_set_text(ui_uiEmotionLabel1, "");
+            lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0xFFD700), 0);
+            breathe_Animation(ui_EmotionCircle1, 0);
+        }
+        else if (new_state & (STATE_CAPTURING_BIT | STATE_CLOUD_SYNC_BIT)) {
+            // 拍照/同步模式: 呼吸动画 + 蓝色
+            lv_label_set_text(ui_uiEmotionLabel1, "");
+            lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0x00A8FF), 0);
+            breathe_Animation(ui_EmotionCircle1, 0);
+        }
+
+        // 3. 强制刷新显示
+        lv_obj_invalidate(ui_EmotionCircle1);
+        lv_obj_invalidate(ui_uiEmotionLabel1);
+        lv_refr_now(lvgl_display);
+
+        xSemaphoreGive(lvgl_mutex);
+    }
+}
 ```
 
 ### 状态监听任务的正确写法 (2026-04-16更新)

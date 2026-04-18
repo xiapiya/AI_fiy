@@ -466,6 +466,280 @@ esp_err_t lvgl_ui_init(esp_lcd_panel_handle_t panel_handle) {
 
 ---
 
+---
+
+## 7. SquareLine Studio 集成规范 (V1.1 新增)
+
+### SquareLine Studio 工作流
+
+**工具用途**: 使用SquareLine Studio可视化设计UI，导出LVGL C代码
+
+**导出文件结构**:
+```
+squareline_export/
+├── ui/
+│   ├── ui.h            # UI组件声明（全局变量）
+│   ├── ui.c            # UI初始化和创建函数
+│   ├── screens/        # 屏幕定义
+│   └── components/     # 自定义组件
+```
+
+### UI组件全局变量映射 (基于UI_prd.md)
+
+**SquareLine Studio导出的核心变量** (在`ui.h`中声明):
+
+```c
+// 状态栏图标
+extern lv_obj_t *ui_label_wifi11;   // WiFi连接图标
+extern lv_obj_t *ui_label_mqtt11;   // MQTT/云端同步图标
+
+// 情绪核心组件
+extern lv_obj_t *ui_EmotionCircle11;    // 底部圆形面板（情绪背景）
+extern lv_obj_t *ui_uiEmotionLabel11;   // 圆圈内部文本标签（表情符号）
+
+// 动画函数
+lv_anim_t * breathe_Animation(lv_obj_t *TargetObject, int delay);
+```
+
+**注意**: SquareLine Studio生成的变量名带数字后缀（如`ui_label_wifi11`），请以实际生成的`screens/ui_MainScreen.h`为准
+
+### Contracts (UI更新接口规范)
+
+#### 网络状态更新
+
+**Signature**:
+```c
+void update_network_ui(bool wifi_ok, bool mqtt_ok);
+```
+
+**Request**:
+- `wifi_ok`: WiFi连接状态 (true=已连接, false=断开)
+- `mqtt_ok`: MQTT连接状态 (true=已连接, false=断开)
+
+**Side Effects**:
+- 修改`ui_label_wifi1`文本颜色 (绿色=正常, 灰色=异常)
+- 修改`ui_label_mqtt1`文本颜色 (蓝色=正常, 灰色=异常)
+- 立即刷新屏幕 (调用`lv_refr_now()`)
+
+**Implementation**:
+```c
+void update_network_ui(bool wifi_ok, bool mqtt_ok) {
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // WiFi状态: 绿色=正常, 灰色=异常
+        lv_obj_set_style_text_color(
+            ui_label_wifi1,
+            wifi_ok ? lv_color_hex(0x00FF00) : lv_color_hex(0x808080),
+            0
+        );
+
+        // MQTT状态: 蓝色=正常, 灰色=异常
+        lv_obj_set_style_text_color(
+            ui_label_mqtt1,
+            mqtt_ok ? lv_color_hex(0x00A8FF) : lv_color_hex(0x808080),
+            0
+        );
+
+        lv_obj_invalidate(ui_label_wifi1);
+        lv_obj_invalidate(ui_label_mqtt1);
+        lv_refr_now(lvgl_display);
+
+        xSemaphoreGive(lvgl_mutex);
+    }
+}
+```
+
+#### 情绪状态切换
+
+**Signature**:
+```c
+void change_emotion_state(int state);
+```
+
+**Request**:
+- `state`: 状态机状态常量
+  - `STATE_LISTENING`: 倾听/待机模式
+  - `STATE_SPEAKING`: 说话/思考模式
+
+**Side Effects**:
+- **STATE_LISTENING**:
+  - 停止所有动画 (`lv_anim_del()`)
+  - 固定尺寸为120x120
+  - 背景色设为浅灰色(0xD3D3D3)
+  - 内部显示"..."文本
+- **STATE_SPEAKING**:
+  - 清空内部文本
+  - 背景色设为活力绿色(0x32CD32)
+  - 启动呼吸动画 (`breathe_Animation()`)
+
+**Implementation**:
+```c
+void change_emotion_state(int state) {
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (state == STATE_LISTENING) {
+            // 停止所有动画
+            lv_anim_del(ui_EmotionCircle1, NULL);
+
+            // 固定尺寸120x120
+            lv_obj_set_width(ui_EmotionCircle1, 120);
+            lv_obj_set_height(ui_EmotionCircle1, 120);
+
+            // 设置浅灰色背景
+            lv_obj_set_style_bg_color(
+                ui_EmotionCircle1,
+                lv_color_hex(0xD3D3D3),
+                0
+            );
+
+            // 显示倾听表情
+            lv_label_set_text(ui_uiEmotionLabel1, "...");
+
+            ESP_LOGI(TAG, "UI状态: 倾听模式（静态圆形）");
+        }
+        else if (state == STATE_SPEAKING) {
+            // 清空表情文本
+            lv_label_set_text(ui_uiEmotionLabel1, "");
+
+            // 设置活力绿色
+            lv_obj_set_style_bg_color(
+                ui_EmotionCircle1,
+                lv_color_hex(0x32CD32),
+                0
+            );
+
+            // 启动呼吸动画
+            breathe_Animation(ui_EmotionCircle1, 0);
+
+            ESP_LOGI(TAG, "UI状态: 说话模式（呼吸动画）");
+        }
+
+        lv_obj_invalidate(ui_EmotionCircle1);
+        lv_obj_invalidate(ui_uiEmotionLabel1);
+        lv_refr_now(lvgl_display);
+
+        xSemaphoreGive(lvgl_mutex);
+    }
+}
+```
+
+### Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| `ui_EmotionCircle1 == NULL` | 打印错误日志，跳过更新 |
+| `ui_uiEmotionLabel1 == NULL` | 打印警告日志，跳过文本更新 |
+| 获取互斥锁超时 (>100ms) | 打印错误日志，放弃更新 |
+| 正常情况 | 更新UI + 强制刷新 |
+
+### Good/Base/Bad Cases
+
+**Good Case** (完整实现):
+```c
+void change_emotion_state(int state) {
+    if (xSemaphoreTake(lvgl_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (state == STATE_LISTENING) {
+            lv_anim_del(ui_EmotionCircle1, NULL);
+            lv_obj_set_size(ui_EmotionCircle1, 120, 120);
+            lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0xD3D3D3), 0);
+            lv_label_set_text(ui_uiEmotionLabel1, "...");
+        }
+
+        lv_obj_invalidate(ui_EmotionCircle1);
+        lv_refr_now(lvgl_display);  // ✅ 强制刷新
+
+        xSemaphoreGive(lvgl_mutex);
+    }
+}
+```
+
+**Bad Case** (忘记停止动画):
+```c
+void change_emotion_state(int state) {
+    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
+
+    if (state == STATE_LISTENING) {
+        // ❌ 忘记停止动画，导致圆形继续呼吸
+        lv_obj_set_size(ui_EmotionCircle1, 120, 120);
+        lv_obj_set_style_bg_color(ui_EmotionCircle1, lv_color_hex(0xD3D3D3), 0);
+    }
+
+    xSemaphoreGive(lvgl_mutex);
+}
+// 问题: 倾听模式下圆形还在呼吸，不符合设计
+```
+
+**Base Case** (不使用SquareLine变量):
+```c
+// 手动创建UI组件，不使用SquareLine Studio生成的变量
+lv_obj_t *emotion_circle = lv_obj_create(lv_screen_active());
+// ...手动配置样式和动画
+// 缺点: 失去可视化编辑的便利性
+```
+
+### 集成步骤
+
+**1. 导入SquareLine Studio导出的代码**:
+```bash
+# 复制导出的ui/目录到ESP-IDF项目的main/目录
+cp -r squareline_export/ui/ esp32-s3-mqtts-audio/main/
+```
+
+**2. 在CMakeLists.txt中添加ui源文件**:
+```cmake
+idf_component_register(
+    SRCS
+        "main.c"
+        "lvgl_ui.c"
+        "ui/ui.c"              # SquareLine生成的UI代码
+        "ui/screens/ui_Screen1.c"  # 屏幕定义
+    INCLUDE_DIRS "." "ui"
+)
+```
+
+**3. 在lvgl_ui.c中引入ui.h**:
+```c
+#include "ui.h"
+
+// 在LVGL初始化后调用
+void lvgl_ui_init(void) {
+    xSemaphoreTake(lvgl_mutex, portMAX_DELAY);
+    ui_init();  // 渲染所有SquareLine生成的UI组件
+    xSemaphoreGive(lvgl_mutex);
+}
+```
+
+**4. 在状态监听任务中调用UI更新函数**:
+```c
+void state_monitor_task(void *pvParameters) {
+    EventGroupHandle_t event_group = state_machine_get_event_group();
+    EventBits_t last_state = 0;
+
+    while (1) {
+        EventBits_t current_state = xEventGroupGetBits(event_group);
+
+        if (current_state != last_state) {
+            if (current_state & STATE_IDLE_BIT) {
+                change_emotion_state(STATE_LISTENING);  // ✅ 调用UI更新
+            } else if (current_state & STATE_RECORDING_BIT) {
+                change_emotion_state(STATE_SPEAKING);
+            }
+
+            last_state = current_state;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+```
+
+### 注意事项
+
+1. **SquareLine Studio版本**: 建议使用v1.3+，支持LVGL v9导出
+2. **动画函数**: `breathe_Animation()`是自动生成的，参数delay通常传0
+3. **组件命名**: SquareLine中的对象名会转换为C变量名（如`EmotionCircle` → `ui_EmotionCircle1`）
+4. **样式覆盖**: 在代码中修改的样式会覆盖SquareLine中设置的默认样式
+
+---
+
 ## 总结
 
 | 陷阱 | 表现 | 解决方案 |
@@ -474,5 +748,6 @@ esp_err_t lvgl_ui_init(esp_lcd_panel_handle_t panel_handle) {
 | 容器默认padding | 背景色显示异常 | `lv_obj_set_style_pad_all(obj, 0, 0)` |
 | EventGroup等待逻辑 | 状态变化检测失效 | `xEventGroupGetBits()` + 轮询 |
 | Mutex无限等待 | 可能死锁 | 设置超时 `pdMS_TO_TICKS(100)` |
+| SquareLine动画未停止 | 倾听模式下仍呼吸 | `lv_anim_del(ui_EmotionCircle1, NULL)` |
 
-**核心口诀**: 改完UI必刷新，容器padding要清零，状态监听用轮询，加锁超时防死锁！
+**核心口诀**: 改完UI必刷新，容器padding要清零，状态监听用轮询，加锁超时防死锁，切换状态先停动画！

@@ -36,6 +36,7 @@ These guides help you **ask the right questions before coding**.
 | **[Reuse-First Principle](./reuse-first-principle.md)** | **禁止造轮子,优先复用** | **开发任何功能前必读** |
 | **[Embedded Guidelines](./embedded-guidelines.md)** | **ESP32-S3嵌入式开发规范** | **开发硬件功能时必读** |
 | **[LVGL ESP32 Guidelines](./lvgl-esp32-guidelines.md)** | **LVGL v9 + ESP32-S3开发规范** | **开发TFT UI功能时必读** |
+| **[SquareLine Studio Integration](./squareline-studio-integration.md)** | **SquareLine Studio集成指南** | **集成SquareLine UI代码时必读** |
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
 
@@ -70,6 +71,16 @@ These guides help you **ask the right questions before coding**.
 - [ ] LVGL线程安全问题
 
 → Read [LVGL ESP32 Guidelines](./lvgl-esp32-guidelines.md)
+
+### When to Integrate SquareLine Studio UI
+
+- [ ] 已用SquareLine Studio设计了UI
+- [ ] 需要集成导出的LVGL代码
+- [ ] 不清楚生成的变量名
+- [ ] UI更新函数如何实现
+- [ ] 状态机如何联动UI
+
+→ Read [SquareLine Studio Integration](./squareline-studio-integration.md)
 
 ### When to Think About Cross-Layer Issues
 
