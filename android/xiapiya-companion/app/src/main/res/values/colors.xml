@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Design 3 主题色 -->
+    <color name="md_theme_light_primary">#006C4C</color>
+    <color name="md_theme_light_onPrimary">#FFFFFF</color>
+    <color name="md_theme_light_secondary">#4D6357</color>
+    <color name="md_theme_light_onSecondary">#FFFFFF</color>
+    <color name="md_theme_light_background">#FBFDF9</color>
+    <color name="md_theme_light_onBackground">#191C1A</color>
+    <color name="md_theme_light_surface">#FBFDF9</color>
+    <color name="md_theme_light_onSurface">#191C1A</color>
+
+    <!-- 消息气泡颜色 -->
+    <color name="message_user_background">#E3F2FD</color>      <!-- 用户消息：浅蓝色 -->
+    <color name="message_ai_background">#F5F5F5</color>        <!-- AI消息：浅灰色 -->
+    <color name="message_user_text">#1565C0</color>            <!-- 用户文本：深蓝色 -->
+    <color name="message_ai_text">#424242</color>              <!-- AI文本：深灰色 -->
+
+    <!-- 流式渲染颜色 -->
+    <color name="streaming_text">#757575</color>               <!-- 流式文本：中灰色 -->
+
+    <!-- 其他 -->
+    <color name="divider">#E0E0E0</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+</resources>

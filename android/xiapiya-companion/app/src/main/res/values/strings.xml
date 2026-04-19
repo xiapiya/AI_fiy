@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">xiapiya情感陪伴智能体</string>
+
+    <!-- 聊天界面 -->
+    <string name="chat_title">xiapiya 陪伴智能体</string>
+    <string name="input_hint">输入消息...</string>
+    <string name="send_button">发送</string>
+    <string name="sending">发送中...</string>
+    <string name="empty_chat">还没有聊天记录，开始对话吧！</string>
+
+    <!-- 菜单 -->
+    <string name="menu_clear_history">清空历史</string>
+
+    <!-- 错误提示 -->
+    <string name="error_network">网络连接失败，请检查网络</string>
+    <string name="error_empty_message">消息不能为空</string>
+    <string name="error_sending">正在发送中...</string>
+
+    <!-- 确认对话框 -->
+    <string name="confirm_clear_title">清空历史记录</string>
+    <string name="confirm_clear_message">确定要清空所有聊天记录吗？此操作不可恢复。</string>
+    <string name="confirm">确定</string>
+    <string name="cancel">取消</string>
+</resources>
