@@ -69,3 +69,7 @@ Desktop.ini
 *.swo
 *~
 .vscode/
+
+# Local reference and test files
+reference/
+test/
